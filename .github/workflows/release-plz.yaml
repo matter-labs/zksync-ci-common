@@ -1,0 +1,88 @@
+name: Release-plz
+
+on:
+  workflow_call:
+    secrets:
+      gh_token:
+        description: 'GitHub token'
+        required: true
+      cargo_registry_token:
+        description: 'Cargo registry token'
+        required: true
+    inputs:
+      run_tests:
+        type: boolean
+        description: 'Run tests before release'
+        required: false
+        default: false
+      manifest_path:
+        type: string
+        description: 'Path to Cargo.toml'
+        required: false
+        default: 'Cargo.toml'
+      config:
+        type: string
+        description: 'Path to release-plz configuration file'
+        required: false
+        default: 'release-plz.toml'
+      concurrency-suffix:
+        type: string
+        description: 'Suffix to use '
+        required: false
+
+jobs:
+
+  # Release unpublished packages.
+  release-plz-release:
+    name: Release-plz release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.gh_token }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests before release
+        if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
+        run: cargo test
+
+      - name: Run release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+          manifest_path: ${{ inputs.manifest_path }}
+          config: ${{ inputs.config }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.gh_token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.cargo_registry_token }}
+
+  # Create a PR with the new versions and changelog, preparing the next release.
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz-${{ github.ref }}-${{ inputs.concurrency-suffix}}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.gh_token }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+          manifest_path: ${{ inputs.manifest_path }}
+          config: ${{ inputs.config }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.gh_token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.cargo_registry_token }}
