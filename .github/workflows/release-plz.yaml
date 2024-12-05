@@ -13,6 +13,11 @@ on:
         description: 'Slack webhook for notifications'
         required: true
     inputs:
+      run_build:
+        type: boolean
+        description: 'Build the workspace before release'
+        required: false
+        default: true
       run_tests:
         type: boolean
         description: 'Run tests before release'
@@ -37,6 +42,11 @@ on:
         description: 'Rust toolchain to use.'
         required: false
         default: 'stable'
+      org-owner:
+        type: string
+        description: 'Organization to add as owner of the crates.'
+        required: false
+        default: 'github:matter-labs:crates-io'
 
 jobs:
 
@@ -56,9 +66,15 @@ jobs:
         with:
           toolchain: ${{ inputs.rust-toolchain }}
 
+      - name: Build the workspace before release
+        shell: 'bash -ex {0}'
+        if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
+        run: cd $(dirname ${{ inputs.manifest_path }}) && cargo build
+
       - name: Run tests before release
+        shell: 'bash -ex {0}'
         if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
-        run: cargo test
+        run: cd $(dirname ${{ inputs.manifest_path }}) && cargo test
 
       - name: Run release-plz
         uses: release-plz/action@v0.5
@@ -69,6 +85,55 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.gh_token }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.cargo_registry_token }}
+
+      - name: Update ownership
+        shell: 'bash -ex {0}'
+        if: ${{ inputs.org-owner != '' }}
+        run: |
+          cd $(dirname ${{ inputs.manifest_path }})
+          ORG_OWNER=${{ inputs.org-owner }}
+          cargo install cargo-workspaces
+          cargo login ${{ secrets.cargo_registry_token }}
+          for PKG in $(cargo ws list); do
+            cargo owner --list --quiet ${PKG} | grep ${ORG_OWNER} || cargo owner --add ${ORG_OWNER} ${PKG}
+          done
+
+      - name: Send Slack notification if release failed
+        if: failure()
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          webhook: ${{ secrets.slack_webhook }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "*🚨 GitHub Release Failed!*"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Repository:*\n`${{ github.repository }}`"
+                  - type: "mrkdwn"
+                    text: "*Workflow:*\n`${{ github.workflow }}`"
+                  - type: "mrkdwn"
+                    text: "*Branch:*\n`${{ github.ref_name }}`"
+                  - type: "mrkdwn"
+                    text: "*Triggered By:*\n`${{ github.actor }}`"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "You can view the detailed logs and troubleshoot the issue by visiting the link below:"
+              - type: "actions"
+                elements:
+                  - type: "button"
+                    text:
+                      type: "plain_text"
+                      text: "View Workflow Logs"
+                      emoji: true
+                    url: "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    style: "danger"
+
 
   # Create a PR with the new versions and changelog, preparing the next release.
   release-plz-pr:
