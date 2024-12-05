@@ -66,6 +66,11 @@ jobs:
         with:
           toolchain: ${{ inputs.rust-toolchain }}
 
+      - name: Install cargo workspaces
+        shell: 'bash -ex {0}'
+        if: ${{ inputs.org-owner != '' }}
+        run: cargo install cargo-workspaces
+
       - name: Build the workspace before release
         shell: 'bash -ex {0}'
         if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
@@ -92,7 +97,6 @@ jobs:
         run: |
           cd $(dirname ${{ inputs.manifest_path }})
           ORG_OWNER=${{ inputs.org-owner }}
-          cargo install cargo-workspaces
           cargo login ${{ secrets.cargo_registry_token }}
           for PKG in $(cargo ws list); do
             cargo owner --list --quiet ${PKG} | grep ${ORG_OWNER} || cargo owner --add ${ORG_OWNER} ${PKG}
@@ -151,6 +155,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ inputs.rust-toolchain }}
 
       - name: Run release-plz
         uses: release-plz/action@v0.5
