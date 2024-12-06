@@ -60,6 +60,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.gh_token }}
+          submodules: "recursive"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -89,12 +90,12 @@ jobs:
 
       - name: Update ownership
         shell: 'bash -ex {0}'
-        if: ${{ steps.release-plz.outputs.releases_created && inputs.org-owner != '' }}
+        if: ${{ steps.release-plz.outputs.releases != '[]' && inputs.org-owner != '' }}
         run: |
           cd $(dirname ${{ inputs.manifest_path }})
           ORG_OWNER=${{ inputs.org-owner }}
           cargo login ${{ secrets.cargo_registry_token }}
-          for PKG in $(echo "${{ steps.release-plz.outputs.releases }}" | jq -r '.[].package_name'); do
+          for PKG in $(echo '${{ steps.release-plz.outputs.releases }}' | jq -r '.[].package_name'); do
             cargo owner --list --quiet ${PKG} | grep ${ORG_OWNER} || cargo owner --add ${ORG_OWNER} ${PKG}
           done
 
@@ -148,6 +149,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.gh_token }}
+          submodules: "recursive"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
