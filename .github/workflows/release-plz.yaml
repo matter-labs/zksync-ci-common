@@ -13,6 +13,11 @@ on:
         description: 'Slack webhook for notifications'
         required: true
     inputs:
+      run_build:
+        type: boolean
+        description: 'Build the workspace before release'
+        required: false
+        default: true
       run_tests:
         type: boolean
         description: 'Run tests before release'
@@ -30,8 +35,18 @@ on:
         default: 'release-plz.toml'
       concurrency-suffix:
         type: string
-        description: 'Suffix to use '
+        description: 'Suffix to use for release-pr job concurrency.'
         required: false
+      rust-toolchain:
+        type: string
+        description: 'Rust toolchain to use.'
+        required: false
+        default: 'stable'
+      org-owner:
+        type: string
+        description: 'Organization to add as owner of the crates.'
+        required: false
+        default: 'github:matter-labs:crates-io'
 
 jobs:
 
@@ -48,10 +63,23 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ inputs.rust-toolchain }}
+
+      - name: Install cargo workspaces
+        shell: 'bash -ex {0}'
+        if: ${{ inputs.org-owner != '' }}
+        run: cargo install cargo-workspaces
+
+      - name: Build the workspace before release
+        shell: 'bash -ex {0}'
+        if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
+        run: cd $(dirname ${{ inputs.manifest_path }}) && cargo build
 
       - name: Run tests before release
+        shell: 'bash -ex {0}'
         if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
-        run: cargo test
+        run: cd $(dirname ${{ inputs.manifest_path }}) && cargo test
 
       - name: Run release-plz
         uses: release-plz/action@v0.5
@@ -63,12 +91,53 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.gh_token }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.cargo_registry_token }}
 
-      - name: Notify about failure
+      - name: Update ownership
+        shell: 'bash -ex {0}'
+        if: ${{ inputs.org-owner != '' }}
+        run: |
+          cd $(dirname ${{ inputs.manifest_path }})
+          ORG_OWNER=${{ inputs.org-owner }}
+          cargo login ${{ secrets.cargo_registry_token }}
+          for PKG in $(cargo ws list); do
+            cargo owner --list --quiet ${PKG} | grep ${ORG_OWNER} || cargo owner --add ${ORG_OWNER} ${PKG}
+          done
+
+      - name: Send Slack notification if release failed
         if: failure()
-        uses: matter-labs/format-release-please-for-slack-action@69e6fe9e4ec531b7b5fb0d826f73c190db83cf42 # v2.1.0
+        uses: slackapi/slack-github-action@v2.0.0
         with:
-          release-please-output: '{ "body": "⚠️ Failed to publish the release" }'
-          slack-webhook-url: ${{ secrets.slack_webhook }}
+          webhook: ${{ secrets.slack_webhook }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "*🚨 GitHub Release Failed!*"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Repository:*\n`${{ github.repository }}`"
+                  - type: "mrkdwn"
+                    text: "*Workflow:*\n`${{ github.workflow }}`"
+                  - type: "mrkdwn"
+                    text: "*Branch:*\n`${{ github.ref_name }}`"
+                  - type: "mrkdwn"
+                    text: "*Triggered By:*\n`${{ github.actor }}`"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "You can view the detailed logs and troubleshoot the issue by visiting the link below:"
+              - type: "actions"
+                elements:
+                  - type: "button"
+                    text:
+                      type: "plain_text"
+                      text: "View Workflow Logs"
+                      emoji: true
+                    url: "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    style: "danger"
+
 
   # Create a PR with the new versions and changelog, preparing the next release.
   release-plz-pr:
@@ -86,6 +155,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ inputs.rust-toolchain }}
 
       - name: Run release-plz
         uses: release-plz/action@v0.5
