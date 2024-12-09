@@ -96,7 +96,14 @@ jobs:
           ORG_OWNER=${{ inputs.org-owner }}
           cargo login ${{ secrets.cargo_registry_token }}
           for PKG in $(echo '${{ steps.release-plz.outputs.releases }}' | jq -r '.[].package_name'); do
-            cargo owner --list --quiet ${PKG} | grep ${ORG_OWNER} || cargo owner --add ${ORG_OWNER} ${PKG}
+            if cargo owner --list --quiet "${PKG}" 2>/dev/null | grep -q "${ORG_OWNER}"; then
+              echo "Owner ${ORG_OWNER} already exists for package ${PKG}."
+            elif cargo owner --list --quiet "${PKG}" 2>/dev/null; then
+              echo "Adding owner ${ORG_OWNER} to package ${PKG}."
+              cargo owner --add "${ORG_OWNER}" "${PKG}"
+            else
+              echo "Package ${PKG} does not exist on crates.io. Skipping."
+            fi
           done
 
       - name: Send Slack notification if release failed
