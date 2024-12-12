@@ -1,0 +1,130 @@
+name: Check tooling
+
+on:
+  workflow_call:
+    inputs:
+      # Custom solidity hardhat parameters
+      hardhat-zksync-version:
+        type: string
+        description: 'Hardhat version'
+        required: false
+      zksync-contracts-version:
+        type: string
+        description: 'ZKsync contracts version'
+        required: false
+      zksync-ethers-version:
+        type: string
+        description: 'ZKsync ethers version'
+        required: false
+      # Solidity compiler parameters
+      zksolc-version:
+        type: string
+        description: 'Zksolc version'
+        required: false
+        default: "latest"
+      solidity-version:
+        type: string
+        description: 'Solidity version'
+        required: false
+        default: "0.8.28"
+      # Custom hardhat vyper parameters
+      hardhat-zksync-deploy-version:
+        type: string
+        description: 'Hardhat zksync deploy version'
+        required: false
+      hardhat-zksync-node-version:
+        type: string
+        description: 'Hardhat zksync node version'
+        required: false
+      hardhat-zksync-vyper-version:
+        type: string
+        description: 'Hardhat zksync vyper version'
+        required: false
+      # Vyper compiler parameters
+      zkvyper-version:
+        type: string
+        description: 'Zkvyper version'
+        required: false
+        default: "latest"
+      vyper-version:
+        type: string
+        description: 'Vyper version'
+        required: false
+        default: "0.3.3"
+
+jobs:
+
+  # hardhat-solidity and hardhat-vyper jobs are supposed to check hardhat templates
+  # with the most recent version of Hardhat
+  # and with the most recent version of compilers
+
+  # This should be triggered when any new version of dependency is released
+  # new compiler is out - trigger it with the new compiler version
+  # new hardhat plugin version is out - trigger it with the new compiler version
+  # if CI fails, then the reasons may include:
+  # 1. new compiler version is not compatible with the code
+  # 2. new hardhat plugin version is not compatible with the code
+  # 3. templates and docs must be updated to support new versions of dependencies
+  hardhat-solidity:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 'templates/hardhat/solidity'
+        shell: bash -ex {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: matter-labs/zksync-contract-templates
+
+      - name: Patch hardhat
+        run: |
+          [ ! -z '${{ inputs.hardhat-zksync-version }}' ] && yarn add @matterlabs/hardhat-zksync@${{ inputs.hardhat-zksync-version }} || true
+          [ ! -z '${{ inputs.zksync-contracts-version }}' ] && yarn add @matterlabs/zksync-contracts@${{ inputs.zksync-contracts-version }} || true
+          [ ! -z '${{ inputs.zksync-ethers-version }}' ] && yarn add zksync-ethers@${{ inputs.zksync-ethers-version }} || true
+
+      # TODO: this step should be removed
+      # when the process.env.* patch is applied to the templates repo
+      - name: Update compiler config
+        run: |
+          sed -i 's/version: "latest"/version: process.env.ZKSOLC_VERSION || "latest"/' hardhat.config.ts
+          sed -i 's/version: "0.8.17"/version: process.env.SOLIDITY_VERSION || "0.8.17"/' hardhat.config.ts
+          cat hardhat.config.ts
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Run tests
+        run: ZKSOLC_VERSION=${{ inputs.zksolc-version }} SOLIDITY_VERSION=${{ inputs.solidity-version }} yarn test
+
+  hardhat-vyper:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 'templates/hardhat/vyper'
+        shell: bash -ex {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: matter-labs/zksync-contract-templates
+
+      - name: Patch hardhat
+        run: |
+          [ ! -z '${{ inputs.hardhat-zksync-deploy-version }}' ] && yarn add @matterlabs/hardhat-zksync-deploy@${{ inputs.hardhat-zksync-deploy-version }} || true
+          [ ! -z '${{ inputs.hardhat-zksync-node-version }}' ] && yarn add @matterlabs/hardhat-zksync-node@${{ inputs.hardhat-zksync-node-version }} || true
+          [ ! -z '${{ inputs.hardhat-zksync-vyper-version }}' ] && yarn add @matterlabs/hardhat-zksync-vyper@${{ inputs.hardhat-zksync-vyper-version }} || true
+
+      # TODO: this step should be removed
+      # when the process.env.* patch is applied to the templates repo
+      - name: Update compiler config
+        run: |
+          sed -i 's/version: "latest"/version: process.env.ZKVYPER_VERSION || "latest"/' hardhat.config.ts
+          sed -i 's/version: "0.3.3"/version: process.env.VYPER_VERSION || "0.3.3"/' hardhat.config.ts
+          cat hardhat.config.ts
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Run tests
+        run: ZKVYPER_VERSION=${{ inputs.zkvyper-version }} VYPER_VERSION=${{ inputs.vyper-version }} yarn test
