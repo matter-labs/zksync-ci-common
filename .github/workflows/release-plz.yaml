@@ -78,8 +78,7 @@ jobs:
         run: cd $(dirname ${{ inputs.manifest_path }}) && cargo test
 
       - name: Run release-plz
-        uses: matter-labs/zksync-ci-common/.github/actions/release-plz@aba-test-git-cliff
-        # uses: release-plz/action@v0.5
+        uses: matter-labs/zksync-ci-common/.github/actions/release-plz-action@aba-custom-release-plz
         id: release-plz
         with:
           command: release
@@ -175,8 +174,7 @@ jobs:
       #     git-cliff --unreleased --bump --include-path "./${PROJECT_DIR}/" --repository "../" --config ./cliff.toml --prepend CHANGELOG.md --verbose
 
       - name: Run release-plz
-        uses: matter-labs/zksync-ci-common/.github/actions/release-plz@aba-test-git-cliff
-        # uses: release-plz/action@v0.5
+        uses: matter-labs/zksync-ci-common/.github/actions/release-plz-action@aba-custom-release-plz
         with:
           command: release-pr
           manifest_path: ${{ inputs.manifest_path }}
