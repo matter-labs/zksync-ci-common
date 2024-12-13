@@ -49,9 +49,7 @@ outputs:
   releases_created:
     description: "Whether release-plz released any package."
     value: ${{ steps.release-plz.outputs.releases_created }}
-branding:
-  icon: "zap"
-  color: "yellow"
+
 runs:
   using: "composite"
   steps:
