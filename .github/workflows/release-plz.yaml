@@ -78,7 +78,8 @@ jobs:
         run: cd $(dirname ${{ inputs.manifest_path }}) && cargo test
 
       - name: Run release-plz
-        uses: release-plz/action@v0.5
+        uses: matter-labs/zksync-ci-common/actions/release-plz.yaml@aba-test-git-cliff
+        # uses: release-plz/action@v0.5
         id: release-plz
         with:
           command: release
@@ -163,18 +164,19 @@ jobs:
         with:
           toolchain: ${{ inputs.rust-toolchain }}
 
-      - name: Install git-cliff
-        uses: taiki-e/install-action@git-cliff
+      # - name: Install git-cliff
+      #   uses: taiki-e/install-action@git-cliff
 
-      - name: Generate changelog
-        shell: 'bash -ex {0}'
-        run: |
-          PROJECT_DIR=$(dirname ${{ inputs.manifest_path }})
-          cd "${PROJECT_DIR}"
-          git-cliff --unreleased --bump --include-path "./${PROJECT_DIR}/" --repository "../" --config ./cliff.toml --prepend CHANGELOG.md --verbose
+      # - name: Generate changelog
+      #   shell: 'bash -ex {0}'
+      #   run: |
+      #     PROJECT_DIR=$(dirname ${{ inputs.manifest_path }})
+      #     cd "${PROJECT_DIR}"
+      #     git-cliff --unreleased --bump --include-path "./${PROJECT_DIR}/" --repository "../" --config ./cliff.toml --prepend CHANGELOG.md --verbose
 
       - name: Run release-plz
-        uses: release-plz/action@v0.5
+        uses: matter-labs/zksync-ci-common/actions/release-plz.yaml@aba-test-git-cliff
+        # uses: release-plz/action@v0.5
         with:
           command: release-pr
           manifest_path: ${{ inputs.manifest_path }}
