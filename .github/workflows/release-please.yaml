@@ -1,0 +1,222 @@
+name: Release-please
+
+on:
+  workflow_call:
+    secrets:
+      gh_token:
+        description: 'GitHub token'
+        required: true
+      cargo_registry_token:
+        description: 'Cargo registry token'
+        required: true
+      slack_webhook:
+        description: 'Slack webhook for notifications'
+        required: true
+    inputs:
+      manifest:
+        type: string
+        description: 'Path to release-please manifest file'
+        required: true
+      config:
+        type: string
+        description: 'Path to release-please configuration file'
+        required: true
+      run_build:
+        type: boolean
+        description: 'Build the workspace before release'
+        required: false
+        default: true
+      run_tests:
+        type: boolean
+        description: 'Run tests before release'
+        required: false
+        default: false
+      concurrency-suffix:
+        type: string
+        description: 'Suffix to use for release-pr job concurrency.'
+        required: false
+      org-owner:
+        type: string
+        description: 'Organization to add as owner of the crates.'
+        required: false
+        default: 'github:matter-labs:crates-io'
+      git-user-name:
+        type: string
+        description: 'Name of the user to use for git operations.'
+        required: false
+        default: 'zksync-era-bot'
+      git-user-email:
+        type: string
+        description: 'Email of the user to use for git operations.'
+        required: false
+        default: 'zksync-era-bot@users.noreply.github.com'
+
+jobs:
+
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      prs_created: ${{ steps.release.outputs.prs_created }}
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      releases: ${{ steps.release.outputs.releases }}
+      prs: ${{ steps.release.outputs.prs }}
+      paths_released: ${{ steps.release.outputs.paths_released }}
+    steps:
+
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.gh_token }}
+          config-file: ${{ inputs.config }}
+          manifest-file: ${{ inputs.manifest }}
+
+      - name: Send Slack notification if release failed
+        if: failure()
+        uses: slackapi/slack-github-action@v2.0.0
+        with:
+          webhook: ${{ secrets.slack_webhook }}
+          webhook-type: incoming-webhook
+          payload: |
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "*🚨 GitHub Release Failed!*"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Repository:*\n`${{ github.repository }}`"
+                  - type: "mrkdwn"
+                    text: "*Workflow:*\n`${{ github.workflow }}`"
+                  - type: "mrkdwn"
+                    text: "*Branch:*\n`${{ github.ref_name }}`"
+                  - type: "mrkdwn"
+                    text: "*Triggered By:*\n`${{ github.actor }}`"
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "You can view the detailed logs and troubleshoot the issue by visiting the link below:"
+              - type: "actions"
+                elements:
+                  - type: "button"
+                    text:
+                      type: "plain_text"
+                      text: "View Workflow Logs"
+                      emoji: true
+                    url: "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    style: "danger"
+
+
+  update-cargo-lock:
+    name: ${{ matrix.pr_branch }}
+    runs-on: ubuntu-latest
+    needs: release-please
+    if: ${{ needs.release-please.outputs.prs_created == 'true' }}
+    strategy:
+      matrix:
+        pr_branch: ${{ fromJson(needs.release-please.outputs.prs).*.headBranchName }}
+      fail-fast: false
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.pr_branch }}
+          token: ${{ secrets.gh_token }}
+          submodules: "recursive"
+
+      # It will automatically check for rust-toolchain file in the repository
+      # and take care of the proper caching to speed up CI.
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@v1
+
+      - name: Run cargo check
+        shell: 'bash -ex {0}'
+        id: cargo-check
+        run: |
+          BRANCH="${{ matrix.pr_branch }}"
+          COMPONENT="${BRANCH##*components--}"
+          COMPONENT_PATH=$(cat ${{ inputs.config }} | jq -r --arg name "${COMPONENT}" '.packages[$name].path')
+          ( cd "${COMPONENT_PATH}" && cargo update --workspace )
+          if ! git diff --exit-code --quiet; then
+            echo "needs_update=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Update Cargo.lock
+        shell: 'bash -ex {0}'
+        if: steps.cargo-check.outputs.needs_update == 'true'
+        run: |
+          git config user.name "${{ inputs.git-user-name }}"
+          git config user.email "${{ inputs.git-user-email }}"
+          git add .
+          git commit -m "chore: update Cargo.lock"
+          git push --set-upstream origin ${{ matrix.pr_branch }}
+
+
+  release-crates:
+    needs: release-please
+    name: Crates Release
+    runs-on: ubuntu-latest
+    if: ${{ needs.release-please.outputs.releases_created == 'true' }}
+    strategy:
+      matrix:
+        path: ${{ fromJson(needs.release-please.outputs.paths_released) }}
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.gh_token }}
+          submodules: "recursive"
+
+      # It will automatically check for rust-toolchain file in the repository
+      # and take care of the proper caching to speed up CI.
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@v1
+        with:
+          bins: 'cargo-workspaces'
+
+      - name: Build the workspace before release
+        shell: 'bash -ex {0}'
+        if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
+        working-directory: ${{ matrix.path }}
+        run: cargo build
+
+      - name: Run tests before release
+        shell: 'bash -ex {0}'
+        if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
+        working-directory: ${{ matrix.path }}
+        run: cargo test
+
+      # Here should go the step to release packages to crates.io
+      - name: Release packages to crates.io
+        shell: 'bash -ex {0}'
+        working-directory: ${{ matrix.path }}
+        run: |
+          echo "${{ matrix.path }}"
+          cargo login ${{ secrets.cargo_registry_token }}
+          cargo workspaces publish --from-git
+
+      # - name: Update ownership
+      #   shell: 'bash -ex {0}'
+      #   if: success() && inputs.org-owner != ''
+      #   working-directory: ${{ matrix.path }}
+      #   run: |
+      #     ORG_OWNER=${{ inputs.org-owner }}
+      #     cargo login ${{ secrets.cargo_registry_token }}
+      #     for PKG in $(echo '${{ steps.release-plz.outputs.releases }}' | jq -r '.[].package_name'); do
+      #       if cargo owner --list --quiet "${PKG}" 2>/dev/null | grep -q "${ORG_OWNER}"; then
+      #         echo "Owner ${ORG_OWNER} already exists for package ${PKG}."
+      #       elif cargo owner --list --quiet "${PKG}" 2>/dev/null; then
+      #         echo "Adding owner ${ORG_OWNER} to package ${PKG}."
+      #         cargo owner --add "${ORG_OWNER}" "${PKG}"
+      #       else
+      #         echo "Package ${PKG} does not exist on crates.io. Skipping."
+      #       fi
+      #     done
+
+  # TODO: create job to update other workspaces
+  # after successful release of the packages
+  # update-other-workspaces:
