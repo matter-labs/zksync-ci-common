@@ -31,16 +31,21 @@ on:
         description: 'Run tests before release'
         required: false
         default: false
+      workspace-dirs:
+        type: string
+        description: 'Path to the workspace directories. To be used in configurations of release-please with merged PR for different components.'
+        required: false
+        default: '.'
       publish-to-crates-io:
-        type: boolean
+        type: string
         description: 'Whether to publish to crates.io'
         required: false
-        default: false
+        default: 'false'
       update-cargo-lock:
-        type: boolean
+        type: string
         description: 'Whether to update Cargo.lock'
         required: false
-        default: true
+        default: 'true'
       org-owner:
         type: string
         description: 'Organization to add as owner of the crates.'
@@ -56,6 +61,11 @@ on:
         description: 'Email of the user to use for git operations.'
         required: false
         default: 'zksync-era-bot@users.noreply.github.com'
+      cargo-lock-commit-message:
+        type: string
+        description: 'Commit message for Cargo.lock update.'
+        required: false
+        default: 'chore: update Cargo.lock'
 
 jobs:
 
@@ -77,12 +87,18 @@ jobs:
           config-file: ${{ inputs.config }}
           manifest-file: ${{ inputs.manifest }}
 
+      - name: Slack notification
+        if: failure()
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
+        with:
+          webhook: ${{ secrets.slack_webhook }}
+
 
   update-cargo-lock:
     name: Update Cargo.lock
     runs-on: ubuntu-latest
     needs: release-please
-    if: ${{ needs.release-please.outputs.prs_created == 'true' && inputs.update-cargo-lock }}
+    if: ${{ needs.release-please.outputs.prs_created == 'true' && inputs.update-cargo-lock  == 'true' }}
     strategy:
       matrix:
         pr_branch: ${{ fromJson(needs.release-please.outputs.prs).*.headBranchName }}
@@ -101,34 +117,39 @@ jobs:
       - name: Install Rust toolchain
         uses: moonrepo/setup-rust@v1
 
-      - name: Run cargo check
-        shell: 'bash -ex {0}'
-        id: cargo-check
-        run: |
-          BRANCH="${{ matrix.pr_branch }}"
-          COMPONENT="${BRANCH##*components--}"
-          COMPONENT_PATH=$(cat ${{ inputs.config }} | jq -r --arg name "${COMPONENT}" '.packages[$name].path')
-          ( cd "${COMPONENT_PATH}" && cargo update --workspace )
-          if ! git diff --exit-code --quiet; then
-            echo "needs_update=true" >> "${GITHUB_OUTPUT}"
-          fi
-
       - name: Update Cargo.lock
         shell: 'bash -ex {0}'
-        if: steps.cargo-check.outputs.needs_update == 'true'
         run: |
-          git config user.name "${{ inputs.git-user-name }}"
-          git config user.email "${{ inputs.git-user-email }}"
-          git add .
-          git commit -m "chore: update Cargo.lock"
-          git push --set-upstream origin ${{ matrix.pr_branch }}
+          BRANCH="${{ matrix.pr_branch }}"
+          if [[ ${BRANCH} == *components* ]]; then
+            for COMPONENT in $(jq -r '.packages | keys[]' ${{ inputs.config }} ); do
+              ( cd "${COMPONENT}" && cargo update --workspace )
+            done
+          else
+            for WORKSPACE in ${{ inputs.workspace-dirs }} ; do
+              ( cd "${WORKSPACE}" && cargo update --workspace )
+            done
+          fi
+          if ! git diff --exit-code --quiet; then
+            git config user.name "${{ inputs.git-user-name }}"
+            git config user.email "${{ inputs.git-user-email }}"
+            git add .
+            git commit -m "${{ inputs.cargo-lock-commit-message }}"
+            git push --set-upstream origin ${{ matrix.pr_branch }}
+          fi
+
+      - name: Slack notification
+        if: failure()
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
+        with:
+          webhook: ${{ secrets.slack_webhook }}
 
 
   publish-crates:
     needs: release-please
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.publish-to-crates-io }}
+    if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.publish-to-crates-io == 'true' }}
     strategy:
       matrix:
         path: ${{ fromJson(needs.release-please.outputs.paths_released) }}
@@ -177,13 +198,8 @@ jobs:
             cargo owner --list --quiet ${PKG} | grep ${ORG_OWNER} || cargo owner --add ${ORG_OWNER} ${PKG}
           done
 
-  notify-slack-if-fail:
-    needs: [release-please, update-cargo-lock, publish-crates]
-    name: Notify Slack
-    runs-on: ubuntu-latest
-    if: failure()
-    steps:
-      - name: Send Slack notification if release failed
+      - name: Slack notification
+        if: failure()
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
         with:
           webhook: ${{ secrets.slack_webhook }}
