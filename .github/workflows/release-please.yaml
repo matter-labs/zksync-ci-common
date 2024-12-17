@@ -235,13 +235,14 @@ jobs:
       - name: Upgrade packages
         shell: 'bash -ex {0}'
         run: |
-          for PATH_RELEASED in $(echo ${{ needs.release-please.outputs.paths_released }} | jq -r '.[]'); do
+          set -o pipefail
+          for PATH_RELEASED in $(echo '${{ needs.release-please.outputs.paths_released }}' | jq -r '.[]'); do
             for COMPONENT in $(jq -r '.packages | keys[]' ${{ inputs.config }} ); do
               (
                 cd "${COMPONENT}"
                 cargo metadata --manifest-path ${PATH_RELEASED}/Cargo.toml \
                   --no-deps --format-version 1 | jq -r '.packages[] | "\(.name) \(.version)"' | while read -r PACKAGE VERSION; do
-                    cargo upgrade --pinned -p ${PACKAGE}@${VERSION}
+                    cargo upgrade --pinned -p ${PACKAGE}@${VERSION} || true
                 done
               )
             done
@@ -249,6 +250,8 @@ jobs:
 
       - name: Commit changes
         shell: 'bash -ex {0}'
+        env:
+          GH_TOKEN: ${{ secrets.gh_token }}
         run: |
           if ! git diff --exit-code --quiet; then
             BRANCH="upgrade-crates-io-dependencies-${{ github.run_number }}"
@@ -263,3 +266,9 @@ jobs:
             --body "Upgrade workspace dependencies to the latest versions" \
             --base ${{ github.repository.default_branch }} \
             --head ${BRANCH}
+
+      - name: Slack notification
+        if: failure()
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
+        with:
+          webhook: ${{ secrets.slack_webhook }}
