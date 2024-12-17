@@ -46,6 +46,11 @@ on:
         description: 'Whether to update Cargo.lock'
         required: false
         default: 'true'
+      upgrade-dependencies:
+        type: string
+        description: 'Whether to upgrade dependencies'
+        required: false
+        default: 'false'
       org-owner:
         type: string
         description: 'Organization to add as owner of the crates.'
@@ -103,6 +108,7 @@ jobs:
       matrix:
         pr_branch: ${{ fromJson(needs.release-please.outputs.prs).*.headBranchName }}
       fail-fast: false
+      max-parallel: 1
     steps:
 
       - name: Checkout repository
@@ -154,6 +160,7 @@ jobs:
       matrix:
         path: ${{ fromJson(needs.release-please.outputs.paths_released) }}
       fail-fast: false
+      max-parallel: 1
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -203,3 +210,56 @@ jobs:
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
         with:
           webhook: ${{ secrets.slack_webhook }}
+
+
+  upgrade-published-dependencies:
+    needs: [release-please, publish-crates]
+    name: Upgrade dependencies
+    runs-on: ubuntu-latest
+    if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.upgrade-dependencies == 'true' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.repository.default_branch }}
+          token: ${{ secrets.gh_token }}
+          submodules: "recursive"
+
+      # It will automatically check for rust-toolchain file in the repository
+      # and take care of the proper caching to speed up CI.
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@v1
+        with:
+          bins: 'cargo-workspaces,cargo-edit'
+
+      - name: Upgrade packages
+        shell: 'bash -ex {0}'
+        run: |
+          for PATH_RELEASED in $(echo ${{ needs.release-please.outputs.paths_released }} | jq -r '.[]'); do
+            for COMPONENT in $(jq -r '.packages | keys[]' ${{ inputs.config }} ); do
+              (
+                cd "${COMPONENT}"
+                cargo metadata --manifest-path ${PATH_RELEASED}/Cargo.toml \
+                  --no-deps --format-version 1 | jq -r '.packages[] | "\(.name) \(.version)"' | while read -r PACKAGE VERSION; do
+                    cargo upgrade --pinned -p ${PACKAGE}@${VERSION}
+                done
+              )
+            done
+          done
+
+      - name: Commit changes
+        shell: 'bash -ex {0}'
+        run: |
+          if ! git diff --exit-code --quiet; then
+            BRANCH="upgrade-crates-io-dependencies-${{ github.run_number }}"
+            git config user.name "${{ inputs.git-user-name }}"
+            git config user.email "${{ inputs.git-user-email }}"
+            git checkout -b ${BRANCH}
+            git add .
+            git commit -m "${{ inputs.cargo-lock-commit-message }}"
+            git push --set-upstream origin ${BRANCH}
+          fi
+          gh pr create --title "chore: upgrade crates.io dependencies" \
+            --body "Upgrade workspace dependencies to the latest versions" \
+            --base ${{ github.repository.default_branch }} \
+            --head ${BRANCH}
