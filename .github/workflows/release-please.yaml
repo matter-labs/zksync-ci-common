@@ -97,6 +97,7 @@ jobs:
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
         with:
           webhook: ${{ secrets.slack_webhook }}
+          context: 'Unable execute release-please'
 
 
   update-cargo-lock:
@@ -149,6 +150,7 @@ jobs:
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
         with:
           webhook: ${{ secrets.slack_webhook }}
+          context: 'Unable to update Cargo.lock'
 
 
   publish-crates:
@@ -210,6 +212,7 @@ jobs:
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
         with:
           webhook: ${{ secrets.slack_webhook }}
+          context: 'Unable to publish to crates.io'
 
 
   upgrade-published-dependencies:
@@ -253,22 +256,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.gh_token }}
         run: |
+          BRANCH="upgrade-crates-io-dependencies-${{ github.run_number }}"
           if ! git diff --exit-code --quiet; then
-            BRANCH="upgrade-crates-io-dependencies-${{ github.run_number }}"
             git config user.name "${{ inputs.git-user-name }}"
             git config user.email "${{ inputs.git-user-email }}"
             git checkout -b ${BRANCH}
             git add .
-            git commit -m "${{ inputs.cargo-lock-commit-message }}"
+            git commit -m "chore: upgrade crates.io dependencies"
             git push --set-upstream origin ${BRANCH}
           fi
           gh pr create --title "chore: upgrade crates.io dependencies" \
             --body "Upgrade workspace dependencies to the latest versions" \
-            --base ${{ github.repository.default_branch }} \
-            --head ${BRANCH}
+            --base "${{ github.repository.default_branch }}" \
+            --head "${BRANCH}"
 
       - name: Slack notification
         if: failure()
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
         with:
           webhook: ${{ secrets.slack_webhook }}
+          context: 'Unable to upgrade cargo dependencies'

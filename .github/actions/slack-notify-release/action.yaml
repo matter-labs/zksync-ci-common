@@ -6,6 +6,10 @@ inputs:
   webhook:
     description: 'Slack Incoming Webhook URL'
     required: true
+  context:
+    description: 'The context of the workflow run'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -20,7 +24,7 @@ runs:
             - type: "section"
               text:
                 type: "mrkdwn"
-                text: "*🚨 GitHub Workflow Failed!*"
+                text: "*🚨 GitHub Workflow Failed: ${{ inputs.context }}!*"
             - type: "section"
               fields:
                 - type: "mrkdwn"
