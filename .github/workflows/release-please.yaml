@@ -129,9 +129,8 @@ jobs:
         run: |
           BRANCH="${{ matrix.pr_branch }}"
           if [[ ${BRANCH} == *components* ]]; then
-            for COMPONENT in $(jq -r '.packages | keys[]' ${{ inputs.config }} ); do
-              ( cd "${COMPONENT}" && cargo update --workspace )
-            done
+            COMPONENT="${BRANCH##*--}"
+            ( cd "${COMPONENT}" && cargo update --workspace )
           else
             for WORKSPACE in ${{ inputs.workspace-dirs }} ; do
               ( cd "${WORKSPACE}" && cargo update --workspace )
