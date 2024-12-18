@@ -264,11 +264,11 @@ jobs:
             git add .
             git commit -m "chore: upgrade crates.io dependencies"
             git push --set-upstream origin ${BRANCH}
+            gh pr create --title "chore: upgrade crates.io dependencies" \
+              --body "Upgrade workspace dependencies to the latest versions" \
+              --base "${{ github.repository.default_branch }}" \
+              --head "${BRANCH}"
           fi
-          gh pr create --title "chore: upgrade crates.io dependencies" \
-            --body "Upgrade workspace dependencies to the latest versions" \
-            --base "${{ github.repository.default_branch }}" \
-            --head "${BRANCH}"
 
       - name: Slack notification
         if: failure()
