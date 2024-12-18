@@ -1,5 +1,13 @@
 name: Release-please
 
+# This workflow automates Rust release management with release-please, including:
+# - Versioning and changelog generation based on manifest and config files.
+# - Optional Cargo workspace build and test steps before release.
+# - Optional automatic updates to Cargo.lock for single and multi-component workspaces.
+# - Publishing packages to crates.io with support for custom ownership settings.
+# - Dependency upgrades with automatic PR creation for updated components across workspaces.
+# - Slack notifications for release events and failure handling.
+
 on:
   workflow_call:
     secrets:
@@ -33,7 +41,7 @@ on:
         default: false
       workspace-dirs:
         type: string
-        description: 'Path to the workspace directories. To be used in configurations of release-please with merged PR for different components.'
+        description: 'Space-separated list of paths to the workspace directories. To be used in configurations of release-please with merged PR for different components.'
         required: false
         default: '.'
       publish-to-crates-io:
@@ -130,7 +138,8 @@ jobs:
           BRANCH="${{ matrix.pr_branch }}"
           if [[ ${BRANCH} == *components* ]]; then
             COMPONENT="${BRANCH##*--}"
-            ( cd "${COMPONENT}" && cargo update --workspace )
+            COMPONENT_PATH=$(jq -r --arg component ${COMPONENT} '.packages | to_entries[] | select(.value.component == $component) | .key' ${{ inputs.config }})
+            ( cd "${COMPONENT_PATH}" && cargo update --workspace )
           else
             for WORKSPACE in ${{ inputs.workspace-dirs }} ; do
               ( cd "${WORKSPACE}" && cargo update --workspace )
@@ -193,7 +202,7 @@ jobs:
         working-directory: ${{ matrix.path }}
         run: |
           cargo login ${{ secrets.cargo_registry_token }}
-          cargo workspaces publish --from-git
+          cargo workspaces publish --publish-as-is
 
       - name: Update ownership
         shell: 'bash -ex {0}'
