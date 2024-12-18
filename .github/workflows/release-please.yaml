@@ -223,7 +223,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.repository.default_branch }}
+          ref: ${{ github.event.repository.default_branch }}
           token: ${{ secrets.gh_token }}
           submodules: "recursive"
 
@@ -256,7 +256,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.gh_token }}
         run: |
-          BRANCH="upgrade-crates-io-dependencies-${{ github.run_number }}"
+          BRANCH="upgrade-crates-io-dependencies-$(date +%s)"
           if ! git diff --exit-code --quiet; then
             git config user.name "${{ inputs.git-user-name }}"
             git config user.email "${{ inputs.git-user-email }}"
@@ -266,7 +266,7 @@ jobs:
             git push --set-upstream origin ${BRANCH}
             gh pr create --title "chore: upgrade crates.io dependencies" \
               --body "Upgrade workspace dependencies to the latest versions" \
-              --base "${{ github.repository.default_branch }}" \
+              --base "${{ github.event.repository.default_branch }}" \
               --head "${BRANCH}"
           fi
 
