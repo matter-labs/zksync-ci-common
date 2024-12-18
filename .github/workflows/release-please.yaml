@@ -241,8 +241,9 @@ jobs:
           for PATH_RELEASED in $(echo '${{ needs.release-please.outputs.paths_released }}' | jq -r '.[]'); do
             for COMPONENT in $(jq -r '.packages | keys[]' ${{ inputs.config }} ); do
               (
+                MANIFEST=$(realpath "${PATH_RELEASED}/Cargo.toml")
                 cd "${COMPONENT}"
-                cargo metadata --manifest-path ${PATH_RELEASED}/Cargo.toml \
+                cargo metadata --manifest-path ${MANIFEST} \
                   --no-deps --format-version 1 | jq -r '.packages[] | "\(.name) \(.version)"' | while read -r PACKAGE VERSION; do
                     cargo upgrade --pinned -p ${PACKAGE}@${VERSION} || true
                 done
