@@ -88,7 +88,7 @@ runs:
 
     - name: Slack notification
       if: failure()
-      uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
+      uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
       with:
         webhook: ${{ inputs.slack_webhook }}
         context: 'Unable to publish to crates.io'

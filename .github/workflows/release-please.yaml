@@ -106,7 +106,7 @@ jobs:
 
       - name: Slack notification
         if: failure()
-        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
         with:
           webhook: ${{ secrets.slack_webhook }}
           context: 'Failed to execute release-please'
@@ -168,7 +168,7 @@ jobs:
 
       - name: Slack notification
         if: failure()
-        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
         with:
           webhook: ${{ secrets.slack_webhook }}
           context: 'Failed to update Cargo.lock'
@@ -190,7 +190,7 @@ jobs:
       max-parallel: 1 # Publish workspaces one by one to prevent possible rate limiting issues
     steps:
       - name: Publish crates
-        uses: matter-labs/zksync-ci-common/.github/actions/publish-crates@aba-release-please-support
+        uses: matter-labs/zksync-ci-common/.github/actions/publish-crates@v1
         with:
           workspace_path: ${{ matrix.path }}
           org_owner: ${{ inputs.org-owner }}
@@ -264,7 +264,7 @@ jobs:
 
       - name: Slack notification
         if: failure()
-        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
         with:
           webhook: ${{ secrets.slack_webhook }}
           context: 'Unable to upgrade cargo dependencies'
