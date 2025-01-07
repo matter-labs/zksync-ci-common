@@ -1,0 +1,94 @@
+name: 'Publish to crates.io'
+
+description: 'Publishes Rust workspace to crates.io'
+
+inputs:
+  workspace_path:
+    type: string
+    description: 'Path to the workspace to publish.'
+    default: '.'
+    required: false
+  org_owner:
+    type: string
+    description: 'Organization to add as owner of the crates.'
+    required: false
+    default: 'github:matter-labs:crates-io'
+  gh_token:
+    type: string
+    description: 'GitHub token to use for checking out the repository.'
+    required: true
+  run_build:
+    type: string
+    description: 'Whether to run build before release.'
+    required: false
+    default: 'true'
+  run_tests:
+    type: string
+    description: 'Whether to run tests before release.'
+    required: false
+    default: 'false'
+  cargo_registry_token:
+    type: string
+    description: 'Token to use for publishing to crates.io.'
+    required: true
+  slack_webhook:
+    type: string
+    description: 'Slack webhook to use for notifications.'
+    required: true
+
+
+runs:
+  using: composite
+  steps:
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ inputs.gh_token }}
+        submodules: "recursive"
+
+    - name: Install Rust toolchain
+      uses: moonrepo/setup-rust@v1
+      with:
+        bins: 'cargo-workspaces'
+
+    - name: Build the workspace before release
+      shell: 'bash -ex {0}'
+      if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
+      working-directory: ${{ inputs.workspace_path }}
+      run: cargo build
+
+    - name: Run tests before release
+      shell: 'bash -ex {0}'
+      if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
+      working-directory: ${{ inputs.workspace_path }}
+      run: cargo test
+
+    - name: Login to registry
+      shell: 'bash -ex {0}'
+      working-directory: ${{ inputs.workspace_path }}
+      run: cargo login ${{ inputs.cargo_registry_token }}
+
+    - name: Release packages to crates.io
+      shell: 'bash -ex {0}'
+      working-directory: ${{ inputs.workspace_path }}
+      run: cargo workspaces publish --publish-as-is
+
+    - name: Update ownership
+      shell: 'bash -ex {0}'
+      if: success() && inputs.org-owner != ''
+      working-directory: ${{ inputs.workspace_path }}
+      run: |
+        # Fail on error from pipe commands
+        set -o pipefail
+        ORG_OWNER=${{ inputs.org-owner }}
+        for PKG in $(cargo ws list); do
+          cargo owner --list --quiet ${PKG} | grep ${ORG_OWNER} || cargo owner --add ${ORG_OWNER} ${PKG}
+        done
+
+    - name: Slack notification
+      if: failure()
+      uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
+      with:
+        webhook: ${{ inputs.slack_webhook }}
+        context: 'Unable to publish to crates.io'

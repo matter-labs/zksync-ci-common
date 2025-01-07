@@ -1,0 +1,270 @@
+name: Release-please
+
+# This workflow automates Rust release management with release-please, including:
+# - Versioning and changelog generation based on manifest and config files.
+# - Optional Cargo workspace build and test steps before release.
+# - Optional automatic updates to Cargo.lock for single and multi-component workspaces.
+# - Publishing packages to crates.io with support for custom ownership settings.
+# - Dependency upgrades with automatic PR creation for updated components across workspaces.
+# - Slack notifications for release events and failure handling.
+
+on:
+  workflow_call:
+    secrets:
+      gh_token:
+        description: 'GitHub token'
+        required: true
+      cargo_registry_token:
+        description: 'Cargo registry token'
+        required: false
+      slack_webhook:
+        description: 'Slack webhook for notifications'
+        required: false
+    inputs:
+      manifest:
+        type: string
+        description: 'Path to release-please manifest file'
+        required: true
+      config:
+        type: string
+        description: 'Path to release-please configuration file'
+        required: true
+      run_build:
+        type: boolean
+        description: 'Build the workspace before release'
+        required: false
+        default: true
+      run_tests:
+        type: boolean
+        description: 'Run tests before release'
+        required: false
+        default: false
+      workspace-dirs:
+        type: string
+        description: 'Space-separated list of paths to the workspace directories. To be used in configurations of release-please with merged PR for different components.'
+        required: false
+        default: '.'
+      publish-to-crates-io:
+        type: string
+        description: 'Whether to publish to crates.io'
+        required: false
+        default: 'false'
+      update-cargo-lock:
+        type: string
+        description: 'Whether to update Cargo.lock'
+        required: false
+        default: 'true'
+      upgrade-dependencies:
+        type: string
+        description: 'Whether to upgrade dependencies'
+        required: false
+        default: 'false'
+      org-owner:
+        type: string
+        description: 'Organization to add as owner of the crates.'
+        required: false
+        default: 'github:matter-labs:crates-io'
+      git-user-name:
+        type: string
+        description: 'Name of the user to use for git operations.'
+        required: false
+        default: 'zksync-era-bot'
+      git-user-email:
+        type: string
+        description: 'Email of the user to use for git operations.'
+        required: false
+        default: 'zksync-era-bot@users.noreply.github.com'
+      cargo-lock-commit-message:
+        type: string
+        description: 'Commit message for Cargo.lock update.'
+        required: false
+        default: 'chore: update Cargo.lock'
+
+jobs:
+
+  # This job runs release-please to generate the release PR(s) and/or GitHub release(s)
+  # accordingly to config and manifest files.
+  # If the release or PRs are created, it will trigger the next jobs in the workflow.
+  # If the job fails, it will notify the Slack channel.
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      prs_created: ${{ steps.release.outputs.prs_created }}
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      releases: ${{ steps.release.outputs.releases }}
+      prs: ${{ steps.release.outputs.prs }}
+      paths_released: ${{ steps.release.outputs.paths_released }}
+    steps:
+
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.gh_token }}
+          config-file: ${{ inputs.config }}
+          manifest-file: ${{ inputs.manifest }}
+
+      - name: Slack notification
+        if: failure()
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
+        with:
+          webhook: ${{ secrets.slack_webhook }}
+          context: 'Failed to execute release-please'
+
+
+  # This job updates the Cargo.lock file for the workspace after a version update.
+  # It will trigger only if the release-please job created a new release PR for a component.
+  # Multiple PRs can be created depending on the release-please config and manifest files.
+  # If the update is successful, a new commit with the updated Cargo.lock will be pushed to the release PR.
+  # If the job fails, it will notify the Slack channel.
+  update-cargo-lock:
+    name: Update Cargo.lock
+    runs-on: ubuntu-latest
+    needs: release-please
+    if: ${{ needs.release-please.outputs.prs_created == 'true' && inputs.update-cargo-lock  == 'true' }}
+    strategy:
+      matrix:
+        pr_branch: ${{ fromJson(needs.release-please.outputs.prs).*.headBranchName }}
+      fail-fast: false
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.pr_branch }}
+          token: ${{ secrets.gh_token }}
+          submodules: "recursive"
+
+      # It will automatically check for rust-toolchain file in the repository
+      # and take care of the proper caching to speed up CI.
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@v1
+
+      - name: Update Cargo.lock
+        shell: 'bash -ex {0}'
+        run: |
+          BRANCH="${{ matrix.pr_branch }}"
+          # Check if the PR branch is a component branch
+          # and update the Cargo.lock for the corresponding component.
+          if [[ ${BRANCH} == *components* ]]; then
+            COMPONENT="${BRANCH##*--}"
+            COMPONENT_PATH=$(jq -r --arg component ${COMPONENT} '.packages | to_entries[] | select(.value.component == $component) | .key' ${{ inputs.config }})
+            ( cd "${COMPONENT_PATH}" && cargo update --workspace )
+          else
+            # In case of a one PR for multiple components
+            # update Cargo.lock for all components using the workspace-dirs input.
+            for WORKSPACE in ${{ inputs.workspace-dirs }} ; do
+              ( cd "${WORKSPACE}" && cargo update --workspace )
+            done
+          fi
+          # Commit changes to Cargo.lock if any
+          if ! git diff --exit-code --quiet; then
+            git config user.name "${{ inputs.git-user-name }}"
+            git config user.email "${{ inputs.git-user-email }}"
+            git add .
+            git commit -m "${{ inputs.cargo-lock-commit-message }}"
+            git push --set-upstream origin ${{ matrix.pr_branch }}
+          fi
+
+      - name: Slack notification
+        if: failure()
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
+        with:
+          webhook: ${{ secrets.slack_webhook }}
+          context: 'Failed to update Cargo.lock'
+
+
+  # This job publishes the workspace packages to crates.io after a successful release.
+  # It will trigger only if the release-please job created a new release for a component and publishing is enabled.
+  # If the publishing fails, it will notify the Slack channel with the error.
+  # For more details about publishing, see .github/actions/publish-crates/action.yaml file.
+  publish-crates:
+    needs: release-please
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.publish-to-crates-io == 'true' }}
+    strategy:
+      matrix:
+        path: ${{ fromJson(needs.release-please.outputs.paths_released) }}
+      fail-fast: false
+      max-parallel: 1 # Publish workspaces one by one to prevent possible rate limiting issues
+    steps:
+      - name: Publish crates
+        uses: matter-labs/zksync-ci-common/.github/actions/publish-crates@v1
+        with:
+          workspace_path: ${{ matrix.path }}
+          org_owner: ${{ inputs.org-owner }}
+          gh_token: ${{ secrets.gh_token }}
+          cargo_registry_token: ${{ secrets.cargo_registry_token }}
+          slack_webhook: ${{ secrets.slack_webhook }}
+          run_build: ${{ inputs.run_build }}
+          run_tests: ${{ inputs.run_tests }}
+
+
+  # This job upgrades the workspace dependencies across different workspaces of one repository.
+  # It will trigger only if the release-please job created a new release and packages were released to Cargo registry.
+  # Dependencies upgrade can be disabled by setting the upgrade-dependencies input to false.
+  # If the upgrade is successful, a new PR with the updated dependencies will be created that should be tested by CI and merged.
+  # If the job fails, it will notify the Slack channel.
+  upgrade-published-dependencies:
+    needs: [release-please, publish-crates]
+    name: Upgrade dependencies
+    runs-on: ubuntu-latest
+    if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.upgrade-dependencies == 'true' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          token: ${{ secrets.gh_token }}
+          submodules: "recursive"
+
+      # It will automatically check for rust-toolchain file in the repository
+      # and take care of the proper caching to speed up CI.
+      - name: Install Rust toolchain
+        uses: moonrepo/setup-rust@v1
+        with:
+          bins: 'cargo-workspaces,cargo-edit'
+
+      - name: Upgrade packages
+        shell: 'bash -ex {0}'
+        run: |
+          set -o pipefail
+          for PATH_RELEASED in $(echo '${{ needs.release-please.outputs.paths_released }}' | jq -r '.[]'); do
+            for COMPONENT in $(jq -r '.packages | keys[]' ${{ inputs.config }} ); do
+              (
+                MANIFEST=$(realpath "${PATH_RELEASED}/Cargo.toml")
+                cd "${COMPONENT}"
+                cargo metadata --manifest-path ${MANIFEST} \
+                  --no-deps --format-version 1 | jq -r '.packages[] | "\(.name) \(.version)"' | while read -r PACKAGE VERSION; do
+                    cargo upgrade --pinned -p ${PACKAGE}@${VERSION} || true
+                done
+              )
+            done
+          done
+
+      - name: Commit changes
+        shell: 'bash -ex {0}'
+        env:
+          GH_TOKEN: ${{ secrets.gh_token }}
+        run: |
+          BRANCH="upgrade-crates-io-dependencies-$(date +%s)"
+          if ! git diff --exit-code --quiet; then
+            git config user.name "${{ inputs.git-user-name }}"
+            git config user.email "${{ inputs.git-user-email }}"
+            git checkout -b ${BRANCH}
+            git add .
+            git commit -m "chore: upgrade crates.io dependencies"
+            git push --set-upstream origin ${BRANCH}
+            gh pr create --title "chore: upgrade crates.io dependencies" \
+              --body "Upgrade workspace dependencies to the latest versions" \
+              --base "${{ github.event.repository.default_branch }}" \
+              --head "${BRANCH}"
+          fi
+
+      - name: Slack notification
+        if: failure()
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
+        with:
+          webhook: ${{ secrets.slack_webhook }}
+          context: 'Unable to upgrade cargo dependencies'
