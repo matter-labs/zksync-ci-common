@@ -82,6 +82,10 @@ on:
 
 jobs:
 
+  # This job runs release-please to generate the release PR(s) and/or GitHub release(s)
+  # accordingly to config and manifest files.
+  # If the release or PRs are created, it will trigger the next jobs in the workflow.
+  # If the job fails, it will notify the Slack channel.
   release-please:
     runs-on: ubuntu-latest
     outputs:
@@ -105,9 +109,14 @@ jobs:
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
         with:
           webhook: ${{ secrets.slack_webhook }}
-          context: 'Unable execute release-please'
+          context: 'Failed to execute release-please'
 
 
+  # This job updates the Cargo.lock file for the workspace after a version update.
+  # It will trigger only if the release-please job created a new release PR for a component.
+  # Multiple PRs can be created depending on the release-please config and manifest files.
+  # If the update is successful, a new commit with the updated Cargo.lock will be pushed to the release PR.
+  # If the job fails, it will notify the Slack channel.
   update-cargo-lock:
     name: Update Cargo.lock
     runs-on: ubuntu-latest
@@ -117,7 +126,6 @@ jobs:
       matrix:
         pr_branch: ${{ fromJson(needs.release-please.outputs.prs).*.headBranchName }}
       fail-fast: false
-      max-parallel: 1
     steps:
 
       - name: Checkout repository
@@ -136,15 +144,20 @@ jobs:
         shell: 'bash -ex {0}'
         run: |
           BRANCH="${{ matrix.pr_branch }}"
+          # Check if the PR branch is a component branch
+          # and update the Cargo.lock for the corresponding component.
           if [[ ${BRANCH} == *components* ]]; then
             COMPONENT="${BRANCH##*--}"
             COMPONENT_PATH=$(jq -r --arg component ${COMPONENT} '.packages | to_entries[] | select(.value.component == $component) | .key' ${{ inputs.config }})
             ( cd "${COMPONENT_PATH}" && cargo update --workspace )
           else
+            # In case of a one PR for multiple components
+            # update Cargo.lock for all components using the workspace-dirs input.
             for WORKSPACE in ${{ inputs.workspace-dirs }} ; do
               ( cd "${WORKSPACE}" && cargo update --workspace )
             done
           fi
+          # Commit changes to Cargo.lock if any
           if ! git diff --exit-code --quiet; then
             git config user.name "${{ inputs.git-user-name }}"
             git config user.email "${{ inputs.git-user-email }}"
@@ -158,9 +171,13 @@ jobs:
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
         with:
           webhook: ${{ secrets.slack_webhook }}
-          context: 'Unable to update Cargo.lock'
+          context: 'Failed to update Cargo.lock'
 
 
+  # This job publishes the workspace packages to crates.io after a successful release.
+  # It will trigger only if the release-please job created a new release for a component and publishing is enabled.
+  # If the publishing fails, it will notify the Slack channel with the error.
+  # For more details about publishing, see .github/actions/publish-crates/action.yaml file.
   publish-crates:
     needs: release-please
     name: Publish to crates.io
@@ -170,59 +187,25 @@ jobs:
       matrix:
         path: ${{ fromJson(needs.release-please.outputs.paths_released) }}
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 1 # Publish workspaces one by one to prevent possible rate limiting issues
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Publish crates
+        uses: matter-labs/zksync-ci-common/.github/actions/publish-crates@aba-release-please-support
         with:
-          token: ${{ secrets.gh_token }}
-          submodules: "recursive"
-
-      # It will automatically check for rust-toolchain file in the repository
-      # and take care of the proper caching to speed up CI.
-      - name: Install Rust toolchain
-        uses: moonrepo/setup-rust@v1
-        with:
-          bins: 'cargo-workspaces'
-
-      - name: Build the workspace before release
-        shell: 'bash -ex {0}'
-        if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
-        working-directory: ${{ matrix.path }}
-        run: cargo build
-
-      - name: Run tests before release
-        shell: 'bash -ex {0}'
-        if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
-        working-directory: ${{ matrix.path }}
-        run: cargo test
-
-      - name: Release packages to crates.io
-        shell: 'bash -ex {0}'
-        working-directory: ${{ matrix.path }}
-        run: |
-          cargo login ${{ secrets.cargo_registry_token }}
-          cargo workspaces publish --publish-as-is
-
-      - name: Update ownership
-        shell: 'bash -ex {0}'
-        if: success() && inputs.org-owner != ''
-        working-directory: ${{ matrix.path }}
-        run: |
-          ORG_OWNER=${{ inputs.org-owner }}
-          cargo login ${{ secrets.cargo_registry_token }}
-          for PKG in $(cargo ws list); do
-            cargo owner --list --quiet ${PKG} | grep ${ORG_OWNER} || cargo owner --add ${ORG_OWNER} ${PKG}
-          done
-
-      - name: Slack notification
-        if: failure()
-        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@aba-release-please-support
-        with:
-          webhook: ${{ secrets.slack_webhook }}
-          context: 'Unable to publish to crates.io'
+          workspace_path: ${{ matrix.path }}
+          org_owner: ${{ inputs.org-owner }}
+          gh_token: ${{ secrets.gh_token }}
+          cargo_registry_token: ${{ secrets.cargo_registry_token }}
+          slack_webhook: ${{ secrets.slack_webhook }}
+          run_build: ${{ inputs.run_build }}
+          run_tests: ${{ inputs.run_tests }}
 
 
+  # This job upgrades the workspace dependencies across different workspaces of one repository.
+  # It will trigger only if the release-please job created a new release and packages were released to Cargo registry.
+  # Dependencies upgrade can be disabled by setting the upgrade-dependencies input to false.
+  # If the upgrade is successful, a new PR with the updated dependencies will be created that should be tested by CI and merged.
+  # If the job fails, it will notify the Slack channel.
   upgrade-published-dependencies:
     needs: [release-please, publish-crates]
     name: Upgrade dependencies
