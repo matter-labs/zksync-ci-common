@@ -92,6 +92,9 @@ on:
       prs:
         description: "List of created release PRs."
         value: ${{ jobs.release-please.outputs.prs }}
+      tag_name:
+        description: "Tag name of the created release."
+        value: ${{ jobs.release-please.outputs.tag_name }}
 
 
 jobs:
