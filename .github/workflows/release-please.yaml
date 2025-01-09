@@ -111,6 +111,7 @@ jobs:
       releases: ${{ steps.release.outputs.releases }}
       prs: ${{ steps.release.outputs.prs }}
       paths_released: ${{ steps.release.outputs.paths_released }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
 
       - name: Run release-please
