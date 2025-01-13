@@ -1,0 +1,125 @@
+name: Foundry
+
+on:
+  workflow_call:
+    inputs:
+      # Dependency versions
+      zksync-era-version:
+        type: string
+        description: 'Zksync era version'
+        required: false
+      era-test-node-version:
+        type: string
+        description: 'Era test node version'
+        required: false
+      # Solidity compiler parameters
+      zksolc-release-suffix:
+        type: string
+        description: 'zksolc artifact suffix to test'
+        required: false
+        default: ""
+      zksolc-version:
+        type: string
+        description: 'zksolc version to test'
+        required: false
+        default: ""
+      solidity-version:
+        type: string
+        description: 'Solidity version'
+        required: false
+        default: "0.8.28"
+
+jobs:
+
+  foundry:
+    runs-on: matterlabs-ci-runner-high-performance
+    container:
+      image: ghcr.io/matter-labs/zksync-llvm-runner:latest
+    defaults:
+      run:
+        shell: bash -ex {0}
+    steps:
+
+      - name: Check input parameters
+        if: ${{ inputs.zksolc-release-suffix != '' && inputs.zksolc-version != '' }}
+        run: |
+          echo "Both zksolc-release-suffix and zksolc-version are set. Please, choose only one of them."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: matter-labs/foundry-zksync
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Patch dependencies
+        env:
+          CARGO_TOML: Cargo.toml
+          GH_ML_URL: https://github.com
+          # `www.github.com` is a workaround for Cargo issue with `patch` section from `git` source
+          # https://github.com/rust-lang/cargo/issues/5478
+          GH_ML_PATCHED_URL: https://www.github.com
+          DEPENDENCIES_LIST: "zksync_dal zksync_basic_types zksync_types zksync_state zksync_multivm zksync_web3_decl zksync_utils zksync_contracts"
+        run: |
+          if [ ! -z ${{ inputs.zksync-era-version }} ]; then
+            echo "[patch.\"${GH_ML_URL}/matter-labs/zksync-era.git\"]" >> "${CARGO_TOML}"
+            for DEP in ${{ env.DEPENDENCIES_LIST }}; do
+              echo "${DEP} = { git = '${GH_ML_PATCHED_URL}/matter-labs/zksync-era', rev = '${{ inputs.zksync-era-version }}' }" >> "${CARGO_TOML}"
+            done
+          fi
+          if [ ! -z ${{ inputs.era-test-node-version }} ]; then
+            echo "[patch.\"${GH_ML_URL}/matter-labs/era-test-node.git\"]" >> "${CARGO_TOML}"
+            echo "era_test_node = { git = '${GH_ML_PATCHED_URL}/matter-labs/era-test-node', rev = '${{ inputs.era-test-node-version }}' }" >> "${CARGO_TOML}"
+          fi
+          cat "${CARGO_TOML}"
+
+      - name: Build foundry
+        run: |
+          export CC=$(which clang)
+          cargo build --release
+          ${PWD}/target/release/forge --version
+          echo "${PWD}/target/release" >> "${GITHUB_PATH}"
+
+      - name: Create test foundry project
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          forge init --no-git --no-commit foundry-test-project
+
+      - name: Patch solc version
+        if: inputs.solidity-version != ''
+        working-directory: foundry-test-project
+        run: |
+          echo "solc_version = \"${{ inputs.solidity-version }}\"" >> foundry.toml
+          cat foundry.toml
+
+      - name: Download zksolc compiler
+        if: inputs.zksolc-release-suffix != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ inputs.zksolc-release-suffix }}
+          path: foundry-test-project/zksolc
+
+      - name: Update compiler config
+        working-directory: foundry-test-project
+        if: inputs.zksolc-release-suffix != ''
+        run: |
+          ZKSOLC_PATH=$(readlink -f ./zksolc/${{ inputs.zksolc-release-suffix }}/zksolc-${{ inputs.zksolc-release-suffix }})
+          chmod a+x "${ZKSOLC_PATH}"
+          ${ZKSOLC_PATH} --version
+          echo "[profile.default.zksync]" >> foundry.toml
+          echo "zksolc = \"${ZKSOLC_PATH}\"" >> foundry.toml
+          cat foundry.toml
+
+      - name: Patch zksolc version
+        if: inputs.zksolc-version != ''
+        working-directory: foundry-test-project
+        run: |
+          echo "[profile.default.zksync]" >> foundry.toml
+          echo "zksolc = \"${{ inputs.zksolc-version }}\"" >> foundry.toml
+          cat foundry.toml
+
+      - name: Run test foundry project
+        working-directory: foundry-test-project
+        run: forge test --zksync --zk-suppressed-errors assemblycreate
