@@ -6,7 +6,7 @@ on:
       # Dependency versions
       zksync-era-version:
         type: string
-        description: 'Zksync era version'
+        description: 'ZKsync Era version'
         required: false
       era-test-node-version:
         type: string
