@@ -1,0 +1,174 @@
+name: Hardhat
+
+on:
+  workflow_call:
+    inputs:
+      # Custom solidity hardhat parameters
+      hardhat-zksync-version:
+        type: string
+        description: 'Hardhat version'
+        required: false
+      zksync-contracts-version:
+        type: string
+        description: 'ZKsync contracts version'
+        required: false
+      zksync-ethers-version:
+        type: string
+        description: 'ZKsync ethers version'
+        required: false
+      # Solidity compiler parameters
+      zksolc-release-suffix:
+        type: string
+        description: 'zksolc artifact suffix to test'
+        required: false
+        default: ''
+      zksolc-version:
+        type: string
+        description: 'zksolc version to test'
+        required: false
+        default: ''
+      # Custom hardhat vyper parameters
+      hardhat-zksync-deploy-version:
+        type: string
+        description: 'Hardhat zksync deploy version'
+        required: false
+      hardhat-zksync-node-version:
+        type: string
+        description: 'Hardhat zksync node version'
+        required: false
+      hardhat-zksync-vyper-version:
+        type: string
+        description: 'Hardhat zksync vyper version'
+        required: false
+      # Vyper compiler parameters
+      zkvyper-release-suffix:
+        type: string
+        description: 'zkvyper artifact suffix to test'
+        required: false
+        default: ''
+      zkvyper-version:
+        type: string
+        description: 'zkvyper version to test'
+        required: false
+        default: ''
+
+jobs:
+
+  # hardhat-solidity and hardhat-vyper jobs are supposed to check hardhat templates
+  # with the most recent version of Hardhat
+  # and with the most recent version of compilers
+
+  # This should be triggered when any new version of dependency is released
+  # new compiler is out - trigger it with the new compiler version
+  # new hardhat plugin version is out - trigger it with the new compiler version
+  # if CI fails, then the reasons may include:
+  # 1. new compiler version is not compatible with the code
+  # 2. new hardhat plugin version is not compatible with the code
+  # 3. templates and docs must be updated to support new versions of dependencies
+  hardhat-solidity:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: 'templates/hardhat/solidity'
+        shell: bash -ex {0}
+    steps:
+
+      - name: Check input parameters
+        if: ${{ inputs.zksolc-release-suffix != '' && inputs.zksolc-version != '' }}
+        run: |
+          echo "Both zksolc-release-suffix and zksolc-version are set. Please, choose only one of them."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: matter-labs/zksync-contract-templates
+
+      - name: Patch hardhat
+        run: |
+          [ ! -z '${{ inputs.hardhat-zksync-version }}' ] && yarn add @matterlabs/hardhat-zksync@${{ inputs.hardhat-zksync-version }} || true
+          [ ! -z '${{ inputs.zksync-contracts-version }}' ] && yarn add @matterlabs/zksync-contracts@${{ inputs.zksync-contracts-version }} || true
+          [ ! -z '${{ inputs.zksync-ethers-version }}' ] && yarn add zksync-ethers@${{ inputs.zksync-ethers-version }} || true
+
+      - name: Download zksolc compiler
+        if: inputs.zksolc-release-suffix != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ inputs.zksolc-release-suffix }}
+          path: templates/hardhat/solidity/zksolc
+
+      - name: Update compiler path
+        if: inputs.zksolc-release-suffix != ''
+        run: |
+          ZKSOLC_PATH=$(readlink -f ./zksolc/${{ inputs.zksolc-release-suffix }}/zksolc-${{ inputs.zksolc-release-suffix }})
+          chmod a+x "${ZKSOLC_PATH}"
+          ${ZKSOLC_PATH} --version
+          sed -i '/zksolc: {/,/settings: {/ { /version:/d }' hardhat.config.ts
+          sed -i "/settings: {/a\      compilerPath: \"${ZKSOLC_PATH}\"," hardhat.config.ts
+          cat hardhat.config.ts
+
+      - name: Update compiler config
+        if: inputs.zksolc-version == ''
+        run: |
+          sed -i 's/version: "latest"/version: "${{ inputs.zksolc-version }}"/' hardhat.config.ts
+          cat hardhat.config.ts
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Run tests
+        run: yarn test
+
+  hardhat-vyper:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: 'templates/hardhat/vyper'
+        shell: bash -ex {0}
+    steps:
+
+      - name: Check input parameters
+        if: ${{ inputs.zkvyper-release-suffix != '' && inputs.zkvyper-version != '' }}
+        run: |
+          echo "Both zkvyper-release-suffix and zkvyper-version are set. Please, choose only one of them."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: matter-labs/zksync-contract-templates
+
+      - name: Patch hardhat
+        run: |
+          [ ! -z '${{ inputs.hardhat-zksync-deploy-version }}' ] && yarn add @matterlabs/hardhat-zksync-deploy@${{ inputs.hardhat-zksync-deploy-version }} || true
+          [ ! -z '${{ inputs.hardhat-zksync-node-version }}' ] && yarn add @matterlabs/hardhat-zksync-node@${{ inputs.hardhat-zksync-node-version }} || true
+          [ ! -z '${{ inputs.hardhat-zksync-vyper-version }}' ] && yarn add @matterlabs/hardhat-zksync-vyper@${{ inputs.hardhat-zksync-vyper-version }} || true
+
+      - name: Download zkvyper compiler
+        if: inputs.zkvyper-release-suffix != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ inputs.zkvyper-release-suffix }}
+          path: templates/hardhat/vyper/zkvyper
+
+      - name: Update compiler path
+        if: inputs.zkvyper-release-suffix != ''
+        run: |
+          ZKVYPER_PATH=$(readlink -f ./zkvyper/${{ inputs.zkvyper-release-suffix }}/zkvyper-${{ inputs.zkvyper-release-suffix }})
+          chmod a+x "${ZKVYPER_PATH}"
+          ${ZKVYPER_PATH} --version
+          sed -i '/zkvyper: {/,/settings: {/ { /version:/d }' hardhat.config.ts
+          sed -i "/settings: {/a\      compilerPath: \"${ZKVYPER_PATH}\"," hardhat.config.ts
+          cat hardhat.config.ts
+
+      - name: Update compiler config
+        if: inputs.zkvyper-version != ''
+        run: |
+          sed -i 's/version: "latest"/version: "${{ inputs.zkvyper-version }}"/' hardhat.config.ts
+          cat hardhat.config.ts
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Run tests
+        run: yarn test
