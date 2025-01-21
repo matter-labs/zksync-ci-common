@@ -35,11 +35,6 @@ inputs:
     type: string
     description: 'Slack webhook to use for notifications.'
     required: true
-  version-suffix:
-    type: string
-    description: 'Suffix to add to the version of the crates.'
-    required: false
-    default: ''
 
 
 runs:
@@ -73,15 +68,6 @@ runs:
       shell: 'bash -ex {0}'
       working-directory: ${{ inputs.workspace_path }}
       run: cargo login ${{ inputs.cargo_registry_token }}
-
-    - name: Add custom version suffix
-      if: ${{ inputs.version_suffix != '' }}
-      shell: 'bash -ex {0}'
-      working-directory: ${{ inputs.workspace_path }}
-      run: |
-        WORKSPACE_VERSION=$(cargo get workspace.package.version)
-        cargo workspaces version custom ${WORKSPACE_VERSION}-${{ inputs.version_suffix }} \
-          --all --no-git-commit --force "*" --yes
 
     - name: Release packages to crates.io
       shell: 'bash -ex {0}'

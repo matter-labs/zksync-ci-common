@@ -162,6 +162,8 @@ jobs:
       # and take care of the proper caching to speed up CI.
       - name: Install Rust toolchain
         uses: moonrepo/setup-rust@v1
+        with:
+          bins: 'cargo-workspaces,cargo-get'
 
       - name: Update Cargo.lock
         shell: 'bash -ex {0}'
@@ -172,12 +174,28 @@ jobs:
           if [[ ${BRANCH} == *components* ]]; then
             COMPONENT="${BRANCH##*--}"
             COMPONENT_PATH=$(jq -r --arg component ${COMPONENT} '.packages | to_entries[] | select(.value.component == $component) | .key' ${{ inputs.config }})
-            ( cd "${COMPONENT_PATH}" && cargo update --workspace )
+            (
+              cd "${COMPONENT_PATH}"
+              if [[ ${{ inputs.version-suffix }} != '' ]]; then
+                WORKSPACE_VERSION=$(cargo get workspace.package.version)
+                cargo workspaces version custom ${WORKSPACE_VERSION}-${{ inputs.version-suffix }} \
+                  --all --no-git-commit --force "*" --yes
+              fi
+              cargo update --workspace
+            )
           else if [[ '${{ inputs.workspace-dirs }}' != '' ]]; then
             # In case of a one PR for multiple components
             # update Cargo.lock for all components using the workspace-dirs input.
             for WORKSPACE in ${{ inputs.workspace-dirs }} ; do
-              ( cd "${WORKSPACE}" && cargo update --workspace )
+              (
+                cd "${WORKSPACE}"
+                if [[ ${{ inputs.version-suffix }} != '' ]]; then
+                  WORKSPACE_VERSION=$(cargo get workspace.package.version)
+                  cargo workspaces version custom ${WORKSPACE_VERSION}-${{ inputs.version-suffix }} \
+                    --all --no-git-commit --force "*" --yes
+                fi
+                cargo update --workspace
+              )
             done
           fi
           # Commit changes to Cargo.lock if any
