@@ -50,7 +50,7 @@ runs:
     - name: Install Rust toolchain
       uses: moonrepo/setup-rust@v1
       with:
-        bins: 'cargo-workspaces,cargo-get'
+        bins: 'cargo-workspaces'
 
     - name: Build the workspace before release
       shell: 'bash -ex {0}'
