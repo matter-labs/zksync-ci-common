@@ -79,6 +79,11 @@ on:
         description: 'Commit message for Cargo.lock update.'
         required: false
         default: 'chore: update Cargo.lock'
+      version-suffix:
+        type: string
+        description: 'Suffix to add to the version of the crates.'
+        required: false
+        default: ''
     outputs:
       releases_created:
         description: "Whether release-please created a new GitHub releases."
@@ -168,7 +173,7 @@ jobs:
             COMPONENT="${BRANCH##*--}"
             COMPONENT_PATH=$(jq -r --arg component ${COMPONENT} '.packages | to_entries[] | select(.value.component == $component) | .key' ${{ inputs.config }})
             ( cd "${COMPONENT_PATH}" && cargo update --workspace )
-          else
+          else if [[ '${{ inputs.workspace-dirs }}' != '' ]]; then
             # In case of a one PR for multiple components
             # update Cargo.lock for all components using the workspace-dirs input.
             for WORKSPACE in ${{ inputs.workspace-dirs }} ; do
@@ -208,7 +213,7 @@ jobs:
       max-parallel: 1 # Publish workspaces one by one to prevent possible rate limiting issues
     steps:
       - name: Publish crates
-        uses: matter-labs/zksync-ci-common/.github/actions/publish-crates@v1
+        uses: matter-labs/zksync-ci-common/.github/actions/publish-crates@aba-custom-crates-suffix
         with:
           workspace_path: ${{ matrix.path }}
           org_owner: ${{ inputs.org-owner }}
@@ -217,6 +222,7 @@ jobs:
           slack_webhook: ${{ secrets.slack_webhook }}
           run_build: ${{ inputs.run_build }}
           run_tests: ${{ inputs.run_tests }}
+          version-suffix: ${{ inputs.version-suffix }}
 
 
   # This job upgrades the workspace dependencies across different workspaces of one repository.
