@@ -220,7 +220,7 @@ jobs:
   publish-crates:
     needs: release-please
     name: Publish to crates.io
-    runs-on: ubuntu-latest
+    runs-on: matterlabs-ci-runner-high-performance
     if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.publish-to-crates-io == 'true' }}
     strategy:
       matrix:
