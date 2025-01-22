@@ -72,7 +72,7 @@ runs:
     - name: Release packages to crates.io
       shell: 'bash -ex {0}'
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo workspaces publish --publish-as-is
+      run: cargo workspaces publish --publish-as-is --allow-dirty
 
     - name: Update ownership
       shell: 'bash -ex {0}'
