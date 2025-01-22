@@ -43,7 +43,7 @@ on:
         type: string
         description: 'Space-separated list of paths to the workspace directories. To be used in configurations of release-please with merged PR for different components.'
         required: false
-        default: '.'
+        default: ''
       publish-to-crates-io:
         type: string
         description: 'Whether to publish to crates.io'
