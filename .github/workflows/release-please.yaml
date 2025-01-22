@@ -178,8 +178,13 @@ jobs:
             (
               cd "${COMPONENT_PATH}"
               if [[ '${{ inputs.version-suffix }}' != '' ]]; then
-                cargo workspaces version custom ${COMPONENT_VERSION}-${{ inputs.version-suffix }} \
-                  --all --no-git-commit --force "*" --yes
+                if grep -qE '# x-release-please-version' Cargo.toml; then
+                  echo "Cargo.toml version manages through release-please. Skip the version suffix update."
+                else
+                  echo "Adding suffix to the version."
+                  cargo workspaces version custom ${COMPONENT_VERSION}-${{ inputs.version-suffix }} \
+                    --all --no-git-commit --force "*" --yes
+                fi
               fi
               cargo update --workspace
             )
