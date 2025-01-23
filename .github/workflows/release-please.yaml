@@ -174,7 +174,7 @@ jobs:
           if [[ ${BRANCH} == *components* ]]; then
             COMPONENT="${BRANCH##*--}"
             COMPONENT_PATH=$(jq -r --arg component ${COMPONENT} '.packages | to_entries[] | select(.value.component == $component) | .key' ${{ inputs.config }})
-            COMPONENT_VERSION=$(jq -r ".${COMPONENT_PATH}" ${{ inputs.manifest }})
+            COMPONENT_VERSION=$(jq -r ".\"${COMPONENT_PATH}\"" ${{ inputs.manifest }})
             (
               cd "${COMPONENT_PATH}"
               cargo workspaces version custom ${COMPONENT_VERSION} \
