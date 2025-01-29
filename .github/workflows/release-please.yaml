@@ -84,6 +84,11 @@ on:
         description: 'Suffix to add to the version of the crates.'
         required: false
         default: ''
+      dependencies:
+        type: string
+        description: 'List of apt dependencies to install'
+        required: false
+        default: ''
     outputs:
       releases_created:
         description: "Whether release-please created a new GitHub releases."
@@ -222,7 +227,7 @@ jobs:
   publish-crates:
     needs: release-please
     name: Publish to crates.io
-    runs-on: matterlabs-ci-runner-high-performance
+    runs-on: matterlabs-ci-runner-highdisk
     if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.publish-to-crates-io == 'true' }}
     strategy:
       matrix:
@@ -240,6 +245,7 @@ jobs:
           slack_webhook: ${{ secrets.slack_webhook }}
           run_build: ${{ inputs.run_build }}
           run_tests: ${{ inputs.run_tests }}
+          dependencies: ${{ inputs.dependencies }}
 
 
   # This job upgrades the workspace dependencies across different workspaces of one repository.
