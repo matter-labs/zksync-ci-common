@@ -35,6 +35,11 @@ inputs:
     type: string
     description: 'Slack webhook to use for notifications.'
     required: true
+  dependencies:
+    type: string
+    description: 'List of apt dependencies to install.'
+    required: false
+    default: ''
 
 
 runs:
@@ -52,17 +57,23 @@ runs:
       with:
         bins: 'cargo-workspaces'
 
+    - name: Install dependencies
+      if: ${{ inputs.dependencies != '' }}
+      shell: 'bash -ex {0}'
+      working-directory: ${{ inputs.workspace_path }}
+      run: sudo apt update && sudo apt install --yes ${{ inputs.dependencies }}
+
     - name: Build the workspace before release
       shell: 'bash -ex {0}'
       if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo build
+      run: cargo build && cargo clean
 
     - name: Run tests before release
       shell: 'bash -ex {0}'
       if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo test
+      run: cargo test && cargo clean
 
     - name: Login to registry
       shell: 'bash -ex {0}'
