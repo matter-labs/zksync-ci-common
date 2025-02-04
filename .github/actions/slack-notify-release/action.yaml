@@ -18,7 +18,7 @@ runs:
       uses: slackapi/slack-github-action@v2.0.0
       with:
         webhook: ${{ inputs.webhook }}
-        webhook-type: webhook-trigger
+        webhook-type: incoming-webhook
         payload: |
           blocks:
             - type: "section"
