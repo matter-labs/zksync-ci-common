@@ -122,4 +122,4 @@ jobs:
 
       - name: Run test foundry project
         working-directory: foundry-test-project
-        run: forge test --zksync --zk-suppressed-errors assemblycreate
+        run: forge test --zksync
