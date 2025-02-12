@@ -105,6 +105,9 @@ on:
       tag_name:
         description: "Tag name of the created release."
         value: ${{ jobs.release-please.outputs.tag_name }}
+      paths_released:
+        description: "List of paths to the released components."
+        value: ${{ jobs.release-please.outputs.paths_released }}
 
 
 jobs:
