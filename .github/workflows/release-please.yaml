@@ -108,6 +108,9 @@ on:
       paths_released:
         description: "List of paths to the released components."
         value: ${{ jobs.release-please.outputs.paths_released }}
+      all:
+        description: "All outputs from the release-please job."
+        value: ${{ jobs.release-please.outputs.all }}
 
 
 jobs:
@@ -125,6 +128,7 @@ jobs:
       prs: ${{ steps.release.outputs.prs }}
       paths_released: ${{ steps.release.outputs.paths_released }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      all: ${{ toJSON(steps.release.outputs) }}
     steps:
 
       - name: Run release-please
