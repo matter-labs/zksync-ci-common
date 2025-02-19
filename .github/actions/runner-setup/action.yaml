@@ -1,0 +1,123 @@
+name: 'Setup runner'
+
+description: 'Setup self-hosted runner for zksync workflows execution.'
+
+inputs:
+  zkstack_version:
+    type: string
+    description: 'Version of zkstack to use.'
+    required: false
+    default: 'ad0df3a'
+  foundry_version:
+    type: string
+    description: 'Version of foundry-zksync to use.'
+    required: false
+    default: 'nightly-27360d4c8d12beddbb730dae07ad33a206b38f4b'
+  node_version:
+    type: string
+    description: 'Version of Node.js to use.'
+    required: false
+    default: '20'
+  enable_cache:
+    type: string
+    description: 'Whether to enable cache.'
+    required: false
+    default: 'true'
+  workspace:
+    type: string
+    description: 'Workspace to cache.'
+    required: false
+    default: ''
+  save_cache:
+    type: string
+    description: 'Whether to save cache.'
+    required: false
+    default: 'false'
+  yarn_install:
+    type: string
+    description: 'Whether to run yarn install.'
+    required: false
+    default: 'true'
+
+
+runs:
+  using: composite
+  steps:
+
+    - name: Update path
+      shell: 'bash -ex {0}'
+      run: mkdir -p bin && echo $(pwd)/bin >> ${GITHUB_PATH}
+
+    - name: Install linux packages
+      shell: 'bash -ex {0}'
+      run: sudo apt update && sudo apt-get install -y libclang-dev liburing-dev psmisc
+
+    - name: Install Rust toolchain
+      uses: moonrepo/setup-rust@v1
+      with:
+        components: 'rustfmt,clippy'
+        bins: 'sqlx-cli,cargo-nextest,sccache'
+        cache: false
+
+    - name: Install mold linker
+      uses: rui314/setup-mold@v1
+
+    - name: Rust cache workspace
+      if: ${{ inputs.workspace != '' && inputs.enable_cache == 'true' }}
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          ${{ inputs.workspace }} -> target
+        shared-key: "${{ inputs.workspace }}"
+        cache-all-crates: true
+        save-if: ${{ inputs.save_cache == 'true' }}
+
+    - name: Rust cache full
+      if: ${{ inputs.workspace == '' && inputs.enable_cache == 'true' }}
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          core -> target
+          prover -> target
+          zkstack_cli -> target
+        shared-key: "shared"
+        cache-all-crates: true
+        save-if: ${{ inputs.save_cache == 'true' }}
+
+    - name: Setup cloud cache
+      shell: 'bash -ex {0}'
+      run: |
+        echo SCCACHE_CACHE_SIZE=50g >> "${GITHUB_ENV}"
+        echo SCCACHE_GCS_BUCKET=matterlabs-infra-sccache-storage >> "${GITHUB_ENV}"
+        echo SCCACHE_GCS_SERVICE_ACCOUNT=gha-ci-runners@matterlabs-infra.iam.gserviceaccount.com >> "${GITHUB_ENV}"
+        echo SCCACHE_GCS_RW_MODE=READ_WRITE >> "${GITHUB_ENV}"
+        echo RUSTC_WRAPPER=sccache >> "${GITHUB_ENV}"
+        echo ZKSYNC_USE_CUDA_STUBS=true >> "${GITHUB_ENV}"
+
+    - name: Set Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Yarn install
+      shell: 'bash -ex {0}'
+      run: npm install -g yarn
+
+    - name: Yarn install
+      if: ${{ inputs.yarn_install == 'true' }}
+      shell: 'bash -ex {0}'
+      run: yarn install
+
+    - name: Install zkstack
+      if: ${{ inputs.zkstack_version != '' }}
+      uses: matter-labs/zksync-ci-common/.github/actions/install-zkstack@aba-ci-optimize
+      with:
+        version: ${{ inputs.zkstack_version }}
+
+    - name: Install forge
+      shell: 'bash -ex {0}'
+      env:
+        FORGE_DOWNLOAD_URL: 'https://github.com/matter-labs/foundry-zksync/releases/download/${{ inputs.foundry_version }}'
+        FORGE_FILENAME: 'foundry_nightly_linux_amd64.tar.gz'
+      working-directory: bin
+      run: curl -L ${FORGE_DOWNLOAD_URL}/${FORGE_FILENAME} --output ${FORGE_FILENAME} && tar -xzf ${FORGE_FILENAME}

@@ -1,0 +1,29 @@
+name: 'Build contracts'
+description: 'Builds or downloads contracts.'
+
+runs:
+  using: "composite"
+  steps:
+
+    - name: Download contracts
+      id: download-contracts
+      shell: 'bash -ex {0}'
+      env:
+        CONTRACTS_WORKFLOW_NAME: 'Build contracts'
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        CONTRACTS_SHA=$(cd contracts && git rev-parse HEAD)
+        for RUN in $(gh run list -R matter-labs/zksync-era --workflow "${CONTRACTS_WORKFLOW_NAME}" --status success --json databaseId --jq '.[].databaseId'); do
+          if gh run download -R matter-labs/zksync-era "${RUN}" -n "contracts-${CONTRACTS_SHA}"; then
+            for ARCHIVE in *.tar.gz; do tar -C ./contracts -zxf "${ARCHIVE}"; done
+            echo "Prebuilt contracts successfully downloaded for SHA=${CONTRACTS_SHA}. Skip rebuilding..."
+            exit 0
+          fi
+        done
+        echo "No prebuilt contracts found for ${CONTRACTS_SHA}"
+        echo "rebuild-required=true" >> "${GITHUB_OUTPUT}"
+
+    - name: Build contracts
+      if: ${{ steps.download-contracts.outputs.rebuild-required == 'true' }}
+      shell: 'bash -ex {0}'
+      run: zkstack dev contracts
