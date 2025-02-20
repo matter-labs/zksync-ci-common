@@ -45,6 +45,11 @@ inputs:
     description: 'Whether to checkout submodules.'
     required: false
     default: 'recursive'
+  skip_checkout:
+    type: string
+    description: 'Whether to skip checkout.'
+    required: false
+    default: 'false'
 
 
 runs:
@@ -52,6 +57,7 @@ runs:
   steps:
 
     - name: Checkout repository
+      if: ${{ inputs.skip_checkout != 'true' }}
       uses: actions/checkout@v4
       with:
         token: ${{ inputs.gh_token }}
