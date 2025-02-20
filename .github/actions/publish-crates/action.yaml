@@ -40,6 +40,11 @@ inputs:
     description: 'List of apt dependencies to install.'
     required: false
     default: ''
+  submodules:
+    type: string
+    description: 'Whether to checkout submodules.'
+    required: false
+    default: 'recursive'
 
 
 runs:
@@ -50,7 +55,7 @@ runs:
       uses: actions/checkout@v4
       with:
         token: ${{ inputs.gh_token }}
-        submodules: "recursive"
+        submodules: "${{ inputs.submodules }}"
 
     - name: Install Rust toolchain
       uses: moonrepo/setup-rust@v1
