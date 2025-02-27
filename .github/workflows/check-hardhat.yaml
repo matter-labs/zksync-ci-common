@@ -114,7 +114,7 @@ jobs:
           cat hardhat.config.ts
 
       - name: Install dependencies
-        run: yarn install
+        run: npm install
 
       - name: Run tests
         run: yarn test
@@ -168,7 +168,7 @@ jobs:
           cat hardhat.config.ts
 
       - name: Install dependencies
-        run: yarn install
+        run: npm install
 
       - name: Run tests
         run: yarn test
