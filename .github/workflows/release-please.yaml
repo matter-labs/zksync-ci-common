@@ -180,11 +180,14 @@ jobs:
           submodules: "recursive"
 
       # It will automatically check for rust-toolchain file in the repository
-      # and take care of the proper caching to speed up CI.
       - name: Install Rust toolchain
         uses: moonrepo/setup-rust@v1
+        env:
+          # To fix rate limiting issues with GitHub API
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           bins: 'cargo-workspaces'
+          cache: false
 
       - name: Update Cargo.lock
         shell: 'bash -ex {0}'
@@ -283,11 +286,14 @@ jobs:
           submodules: "recursive"
 
       # It will automatically check for rust-toolchain file in the repository
-      # and take care of the proper caching to speed up CI.
       - name: Install Rust toolchain
         uses: moonrepo/setup-rust@v1
+        env:
+          # To fix rate limiting issues with GitHub API
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           bins: 'cargo-workspaces,cargo-edit'
+          cache: false
 
       - name: Upgrade packages
         shell: 'bash -ex {0}'

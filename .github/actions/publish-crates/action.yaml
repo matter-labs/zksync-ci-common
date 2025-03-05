@@ -65,8 +65,12 @@ runs:
 
     - name: Install Rust toolchain
       uses: moonrepo/setup-rust@v1
+      env:
+        # To fix rate limiting issues with GitHub API
+        GITHUB_TOKEN: ${{ github.token }}
       with:
         bins: 'cargo-workspaces'
+        cache: false
 
     - name: Install dependencies
       if: ${{ inputs.dependencies != '' }}
