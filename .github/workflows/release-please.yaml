@@ -137,7 +137,7 @@ jobs:
         with:
           # If publishing to crates.io is enabled, use default github token here to not run CI twice
           # otherwise, use the provided gh_token secret with correct permissions.
-          token: ${{ inputs.publish-to-crates-io == 'true' && github.token || secrets.gh_token }}
+          token: ${{ secrets.gh_token }}
           config-file: ${{ inputs.config }}
           manifest-file: ${{ inputs.manifest }}
 
