@@ -34,6 +34,11 @@ on:
         description: 'Build the workspace before release'
         required: false
         default: true
+      cargo_build_args:
+        type: string
+        description: 'Additional arguments to pass to cargo during the build'
+        required: false
+        default: ''
       run_tests:
         type: boolean
         description: 'Run tests before release'
@@ -263,6 +268,7 @@ jobs:
           cargo_registry_token: ${{ secrets.cargo_registry_token }}
           slack_webhook: ${{ secrets.slack_webhook }}
           run_build: ${{ inputs.run_build }}
+          cargo_build_args: ${{ inputs.cargo_build_args }}
           run_tests: ${{ inputs.run_tests }}
           dependencies: ${{ inputs.dependencies }}
 
