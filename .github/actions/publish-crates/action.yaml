@@ -22,6 +22,11 @@ inputs:
     description: 'Whether to run build before release.'
     required: false
     default: 'true'
+  cargo_build_args:
+    type: string
+    description: 'Additional arguments to pass to cargo during the build.'
+    required: false
+    default: ''
   run_tests:
     type: string
     description: 'Whether to run tests before release.'
@@ -82,13 +87,13 @@ runs:
       shell: 'bash -ex {0}'
       if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo build && cargo clean
+      run: cargo build ${{ inputs.cargo_build_args }} && cargo clean
 
     - name: Run tests before release
       shell: 'bash -ex {0}'
       if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo test && cargo clean
+      run: cargo test ${{ inputs.cargo_build_args }} && cargo clean
 
     - name: Login to registry
       shell: 'bash -ex {0}'
