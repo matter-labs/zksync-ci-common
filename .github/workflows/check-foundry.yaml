@@ -85,7 +85,7 @@ jobs:
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
-          forge init --no-git --no-commit foundry-test-project
+          forge init --no-git foundry-test-project
 
       - name: Patch solc version
         if: inputs.solidity-version != ''
