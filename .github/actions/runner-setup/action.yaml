@@ -77,18 +77,6 @@ runs:
         cache-all-crates: true
         save-if: ${{ inputs.save_cache == 'true' }}
 
-    # - name: Rust cache full
-    #   if: ${{ inputs.workspace == '' && inputs.enable_cache == 'true' }}
-    #   uses: Swatinem/rust-cache@v2
-    #   with:
-    #     workspaces: |
-    #       core -> target
-    #       prover -> target
-    #       zkstack_cli -> target
-    #     shared-key: ${{ inputs.cache_shared_key }}
-    #     cache-all-crates: true
-    #     save-if: ${{ inputs.save_cache == 'true' }}
-
     - name: Setup cloud cache
       shell: 'bash -ex {0}'
       run: |
