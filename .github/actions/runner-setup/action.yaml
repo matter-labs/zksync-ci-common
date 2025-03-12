@@ -43,6 +43,10 @@ inputs:
     description: 'Whether to run yarn install.'
     required: false
     default: 'true'
+outputs:
+  cache-hit:
+    description: 'Whether cache hit.'
+    value: ${{ steps.rust-cache.outputs.cache-hit }}
 
 
 runs:
@@ -70,6 +74,7 @@ runs:
     - name: Rust cache workspace
       if: ${{ inputs.workspace != '' && inputs.enable_cache == 'true' }}
       uses: Swatinem/rust-cache@v2
+      id: rust-cache
       with:
         workspaces: |
           ${{ inputs.workspace }} -> target
