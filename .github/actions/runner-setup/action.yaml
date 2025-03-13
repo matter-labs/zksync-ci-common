@@ -3,11 +3,6 @@ name: 'Setup runner'
 description: 'Setup self-hosted runner for zksync workflows execution.'
 
 inputs:
-  zkstack_version:
-    type: string
-    description: 'Version of zkstack to use.'
-    required: false
-    default: 'ad0df3a'
   foundry_version:
     type: string
     description: 'Version of foundry-zksync to use.'
@@ -110,10 +105,7 @@ runs:
       run: yarn install
 
     - name: Install zkstack
-      if: ${{ inputs.zkstack_version != '' }}
       uses: matter-labs/zksync-ci-common/.github/actions/install-zkstack@aba-ci-optimize
-      with:
-        version: ${{ inputs.zkstack_version }}
 
     - name: Install forge
       shell: 'bash -ex {0}'
