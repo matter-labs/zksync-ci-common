@@ -43,6 +43,16 @@ inputs:
     description: 'Whether to enable CUDA.'
     required: false
     default: 'false'
+  setup_valgrind:
+    type: string
+    description: 'Whether to enable Valgrind.'
+    required: false
+    default: 'false'
+  install_zkstack:
+    type: string
+    description: 'Whether to install zkstack.'
+    required: false
+    default: 'true'
 outputs:
   cache-hit:
     description: 'Whether cache hit.'
@@ -112,6 +122,7 @@ runs:
       run: yarn install
 
     - name: Install zkstack
+      if: ${{ inputs.install_zkstack == 'true' }}
       uses: matter-labs/zksync-ci-common/.github/actions/install-zkstack@aba-ci-optimize
 
     - name: Install forge
@@ -121,6 +132,17 @@ runs:
         FORGE_FILENAME: 'foundry_nightly_linux_amd64.tar.gz'
       working-directory: bin
       run: curl -L ${FORGE_DOWNLOAD_URL}/${FORGE_FILENAME} --output ${FORGE_FILENAME} && tar -xzf ${FORGE_FILENAME}
+
+    - name: Install valgrind
+      shell: 'bash -ex {0}'
+      if: ${{ inputs.setup_valgrind == 'true' }}
+      run: |
+        wget -c https://sourceware.org/pub/valgrind/valgrind-3.20.0.tar.bz2 && \
+          tar -xf valgrind-3.20.0.tar.bz2 && \
+          cd valgrind-3.20.0 && ./configure && make -j && sudo make install && \
+          cd ../ && rm -rf valgrind-3.20.0.tar.bz2 && rm -rf valgrind-3.20.0
+
+        which valgrind
 
     - name: Setup CUDA
       shell: 'bash -ex {0}'

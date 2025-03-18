@@ -24,7 +24,7 @@ runs:
       # if: ${{ steps.changed-files.outputs.any_changed == 'false' }}
       run: |
         for RUN in $(gh run list -R matter-labs/zksync-era --workflow "${ZKSTACK_WORKFLOW_NAME}" --status success --json databaseId --jq '.[].databaseId'); do
-          if gh run download -R matter-labs/zksync-era "${RUN}" -n "zkstack"; then
+          if gh run download -R matter-labs/zksync-era "${RUN}" -n "zkstack-${{ runner.arch }}"; then
             echo "zkstack binary successfully downloaded. Skip rebuilding..."
             ./zkstack --version
             exit 0
