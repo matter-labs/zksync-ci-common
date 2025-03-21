@@ -207,7 +207,7 @@ jobs:
             (
               cd "${COMPONENT_PATH}"
               cargo workspaces version custom ${COMPONENT_VERSION} \
-                --all --no-git-commit --force "*" --yes
+                --all --exact --no-git-commit --force "*" --yes
               if [[ '${{ inputs.version-suffix }}' != '' ]]; then
                 if grep -qE '# x-release-please-version' Cargo.toml; then
                   echo "Cargo.toml version manages through release-please. Skip the version suffix update."
