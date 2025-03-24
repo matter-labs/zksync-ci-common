@@ -87,13 +87,13 @@ runs:
       shell: 'bash -ex {0}'
       if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo build ${{ inputs.cargo_build_args }} && cargo clean
+      run: cargo build --locked ${{ inputs.cargo_build_args }} && cargo clean
 
     - name: Run tests before release
       shell: 'bash -ex {0}'
       if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo test ${{ inputs.cargo_build_args }} && cargo clean
+      run: cargo test --locked ${{ inputs.cargo_build_args }} && cargo clean
 
     - name: Login to registry
       shell: 'bash -ex {0}'
