@@ -74,8 +74,16 @@ runs:
         # To fix rate limiting issues with GitHub API
         GITHUB_TOKEN: ${{ github.token }}
       with:
-        bins: 'cargo-workspaces'
         cache: false
+
+    # Install latest cargo-workspaces with support of `--locked` option
+    - name: Install latest cargo-workspaces
+      shell: 'bash -ex {0}'
+      working-directory: ${{ inputs.workspace_path }}
+      run: |
+        cargo install cargo-workspaces --locked \
+          --git https://github.com/pksunkara/cargo-workspaces \
+          --rev 0e1fa77a382ada57e53e8bb74ee2d08ddf2647ce
 
     - name: Install dependencies
       if: ${{ inputs.dependencies != '' }}
@@ -103,7 +111,9 @@ runs:
     - name: Release packages to crates.io
       shell: 'bash -ex {0}'
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo workspaces publish --publish-as-is --allow-dirty
+      run: |
+        cargo workspaces --version
+        cargo workspaces publish --locked --publish-as-is --allow-dirty
 
     - name: Update ownership
       shell: 'bash -ex {0}'
