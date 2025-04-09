@@ -74,8 +74,16 @@ runs:
         # To fix rate limiting issues with GitHub API
         GITHUB_TOKEN: ${{ github.token }}
       with:
-        bins: 'cargo-workspaces'
         cache: false
+
+    # Install latest cargo-workspaces with support of `--locked` publishing option
+    - name: Install latest cargo-workspaces
+      shell: 'bash -ex {0}'
+      working-directory: ${{ inputs.workspace_path }}
+      run: |
+        cargo install cargo-workspaces --locked \
+          --git https://github.com/pksunkara/cargo-workspaces \
+          --rev 0e1fa77a382ada57e53e8bb74ee2d08ddf2647ce
 
     - name: Install dependencies
       if: ${{ inputs.dependencies != '' }}
@@ -83,17 +91,27 @@ runs:
       working-directory: ${{ inputs.workspace_path }}
       run: sudo apt update && sudo apt install --yes ${{ inputs.dependencies }}
 
+    - name: Check for Cargo.lock file
+      shell: 'bash -ex {0}'
+      working-directory: ${{ inputs.workspace_path }}
+      id: cargo-lock
+      run: |
+        if [ -f Cargo.lock ]; then
+          echo "Cargo.lock file exists. Proceeding with --locked build and publishing."
+          echo "locked=--locked" >> "${GITHUB_OUTPUT}"
+        fi
+
     - name: Build the workspace before release
       shell: 'bash -ex {0}'
       if: ${{ inputs.run_build == true || inputs.run_build == 'true' }}
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo build ${{ inputs.cargo_build_args }} && cargo clean
+      run: cargo build ${{ steps.cargo-lock.outputs.locked }} ${{ inputs.cargo_build_args }} && cargo clean
 
     - name: Run tests before release
       shell: 'bash -ex {0}'
       if: ${{ inputs.run_tests == true || inputs.run_tests == 'true' }}
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo test ${{ inputs.cargo_build_args }} && cargo clean
+      run: cargo test ${{ steps.cargo-lock.outputs.locked }} ${{ inputs.cargo_build_args }} && cargo clean
 
     - name: Login to registry
       shell: 'bash -ex {0}'
@@ -103,7 +121,9 @@ runs:
     - name: Release packages to crates.io
       shell: 'bash -ex {0}'
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo workspaces publish --publish-as-is --allow-dirty
+      run: |
+        cargo workspaces --version
+        cargo workspaces publish ${{ steps.cargo-lock.outputs.locked }} --publish-as-is --allow-dirty
 
     - name: Update ownership
       shell: 'bash -ex {0}'
