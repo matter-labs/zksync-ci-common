@@ -123,7 +123,7 @@ runs:
       working-directory: ${{ inputs.workspace_path }}
       run: |
         cargo workspaces --version
-        cargo workspaces publish ${{ steps.cargo-lock.outputs.locked }} --publish-as-is --allow-dirty
+        cargo workspaces publish --publish-as-is --allow-dirty
 
     - name: Update ownership
       shell: 'bash -ex {0}'
