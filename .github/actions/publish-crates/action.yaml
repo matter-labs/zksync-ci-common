@@ -55,6 +55,16 @@ inputs:
     description: 'Whether to skip checkout.'
     required: false
     default: 'false'
+  locked:
+    type: string
+    description: 'Whether to use --locked option for cargo commands.'
+    required: false
+    default: 'false'
+  dry_run:
+    type: string
+    description: 'Whether to run the publishing in dry mode.'
+    required: false
+    default: 'false'
 
 
 runs:
@@ -92,6 +102,7 @@ runs:
       run: sudo apt update && sudo apt install --yes ${{ inputs.dependencies }}
 
     - name: Check for Cargo.lock file
+      if: ${{ inputs.locked == 'true' }}
       shell: 'bash -ex {0}'
       working-directory: ${{ inputs.workspace_path }}
       id: cargo-lock
@@ -123,11 +134,12 @@ runs:
       working-directory: ${{ inputs.workspace_path }}
       run: |
         cargo workspaces --version
-        cargo workspaces publish ${{ steps.cargo-lock.outputs.locked }} --publish-as-is --allow-dirty
+        [[ ${{ inputs.dry_run }} == 'true' ]] && DRY_RUN="--dry-run"
+        cargo workspaces publish ${{ steps.cargo-lock.outputs.locked }} ${DRY_RUN} --publish-as-is --allow-dirty
 
     - name: Update ownership
       shell: 'bash -ex {0}'
-      if: success() && inputs.org-owner != ''
+      if: success() && inputs.org-owner != '' && inputs.dry_run == 'false'
       working-directory: ${{ inputs.workspace_path }}
       run: |
         # Fail on error from pipe commands
