@@ -65,6 +65,11 @@ inputs:
     description: 'Whether to run the publishing in dry mode.'
     required: false
     default: 'false'
+  notify_slack:
+    type: string
+    description: 'Whether to notify Slack on failure.'
+    required: false
+    default: 'true'
 
 
 runs:
@@ -150,7 +155,7 @@ runs:
         done
 
     - name: Slack notification
-      if: failure()
+      if: failure() && inputs.notify_slack == 'true'
       uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
       with:
         webhook: ${{ inputs.slack_webhook }}
