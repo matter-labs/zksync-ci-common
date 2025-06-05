@@ -214,7 +214,7 @@ jobs:
                 else
                   echo "Adding suffix to the version."
                   cargo workspaces version custom ${COMPONENT_VERSION}-${{ inputs.version-suffix }} \
-                    --all --no-git-commit --force --exact "*" --yes
+                    --all --no-git-commit --exact --force "*" --yes
                 fi
               fi
               cargo update --workspace
