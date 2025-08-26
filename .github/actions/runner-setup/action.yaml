@@ -7,7 +7,7 @@ inputs:
     type: string
     description: 'Version of foundry-zksync to use.'
     required: false
-    default: 'nightly-27360d4c8d12beddbb730dae07ad33a206b38f4b'
+    default: '1.2.3'
   node_version:
     type: string
     description: 'Version of Node.js to use.'
@@ -83,54 +83,59 @@ runs:
         cache: false
 
     - name: Rust cache workspace
-      if: ${{ inputs.workspace != '' && inputs.enable_cache == 'true' }}
+      if: inputs.enable_cache == 'true'
       uses: Swatinem/rust-cache@v2
       id: rust-cache
       with:
-        workspaces: |
-          ${{ inputs.workspace }} -> target
-        shared-key: "${{ format('{0}-{1}', inputs.workspace, inputs.cache_shared_key) }}"
+        shared-key: "${{ inputs.cache_shared_key }}"
         cache-all-crates: true
         cache-workspace-crates: true
         save-if: ${{ inputs.save_cache == 'true' }}
 
-    - name: Setup cloud cache
+    # - name: Setup cloud cache
+    #   shell: 'bash -ex {0}'
+    #   run: |
+    #     echo SCCACHE_CACHE_SIZE=50g >> "${GITHUB_ENV}"
+    #     echo SCCACHE_GCS_BUCKET=matterlabs-infra-sccache-storage >> "${GITHUB_ENV}"
+    #     echo SCCACHE_GCS_SERVICE_ACCOUNT=gha-ci-runners@matterlabs-infra.iam.gserviceaccount.com >> "${GITHUB_ENV}"
+    #     echo SCCACHE_GCS_RW_MODE=READ_WRITE >> "${GITHUB_ENV}"
+    #     echo RUSTC_WRAPPER=sccache >> "${GITHUB_ENV}"
+    #     if [[ ${{ inputs.setup_cuda }} == 'false' ]]; then
+    #       echo ZKSYNC_USE_CUDA_STUBS=true >> "${GITHUB_ENV}"
+    #     fi
+
+    - name: Set Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Yarn install
       shell: 'bash -ex {0}'
-      run: |
-        echo SCCACHE_CACHE_SIZE=50g >> "${GITHUB_ENV}"
-        echo SCCACHE_GCS_BUCKET=matterlabs-infra-sccache-storage >> "${GITHUB_ENV}"
-        echo SCCACHE_GCS_SERVICE_ACCOUNT=gha-ci-runners@matterlabs-infra.iam.gserviceaccount.com >> "${GITHUB_ENV}"
-        echo SCCACHE_GCS_RW_MODE=READ_WRITE >> "${GITHUB_ENV}"
-        echo RUSTC_WRAPPER=sccache >> "${GITHUB_ENV}"
-        if [[ ${{ inputs.setup_cuda }} == 'false' ]]; then
-          echo ZKSYNC_USE_CUDA_STUBS=true >> "${GITHUB_ENV}"
-        fi
+      run: npm install -g yarn
 
-    # - name: Set Node.js
-    #   uses: actions/setup-node@v4
-    #   with:
-    #     node-version: ${{ inputs.node_version }}
-
-    # - name: Yarn install
-    #   shell: 'bash -ex {0}'
-    #   run: npm install -g yarn
-
-    # - name: Yarn install
-    #   if: ${{ inputs.yarn_install == 'true' }}
-    #   shell: 'bash -ex {0}'
-    #   run: yarn install
+    - name: Yarn install
+      if: ${{ inputs.yarn_install == 'true' }}
+      shell: 'bash -ex {0}'
+      run: yarn install
 
     # - name: Install zkstack
     #   if: ${{ inputs.install_zkstack == 'true' }}
     #   uses: matter-labs/zksync-ci-common/.github/actions/install-zkstack@aba-ci-optimize
 
-    # - name: Install forge
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: v1.2.3
+        cache: false
+
+    # - name: Install foundry
     #   shell: 'bash -ex {0}'
-    #   env:
-    #     FORGE_DOWNLOAD_URL: 'https://github.com/matter-labs/foundry-zksync/releases/download/${{ inputs.foundry_version }}'
-    #     FORGE_FILENAME: 'foundry_nightly_linux_amd64.tar.gz'
-    #   working-directory: bin
-    #   run: curl -L ${FORGE_DOWNLOAD_URL}/${FORGE_FILENAME} --output ${FORGE_FILENAME} && tar -xzf ${FORGE_FILENAME}
+    #   run: |
+    #     wget https://foundry.paradigm.xyz -O foundryup.sh
+    #     bash foundryup.sh
+    #     # Temporarily pin foundry version to 1.2.3 as anvil 1.3.0/1.3.1 made breaking changes in state format.
+    #     ~/.foundry/bin/foundryup -i 1.2.3
+    #     echo ~/.foundry/bin >> ${GITHUB_PATH}
 
     # - name: Install valgrind
     #   shell: 'bash -ex {0}'
