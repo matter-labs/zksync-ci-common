@@ -194,6 +194,17 @@ jobs:
           bins: 'cargo-workspaces'
           cache: false
 
+      - name: Git config for private repositories
+        env:
+          GH_TOKEN: ${{ secrets.gh_token }}
+        shell: 'bash -ex {0}'
+        run: |
+          IS_REPO_PRIVATE=$(gh api repos/${{ github.repository }} --jq '.private')
+          if [[ "${IS_REPO_PRIVATE}" == "true" ]]; then
+            echo CARGO_NET_GIT_FETCH_WITH_CLI=true >> "${GITHUB_ENV}"
+            git config --global url."https://${{ secrets.gh_token }}:x-oauth-basic@github.com/".insteadOf "ssh://git@github.com/"
+          fi
+
       - name: Update Cargo.lock
         shell: 'bash -ex {0}'
         run: |
