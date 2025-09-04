@@ -66,6 +66,7 @@ jobs:
   # 2. new hardhat plugin version is not compatible with the code
   # 3. templates and docs must be updated to support new versions of dependencies
   hardhat-solidity:
+    if: ${{ contains(github.repository, 'solidity') }}
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -120,6 +121,7 @@ jobs:
         run: yarn test
 
   hardhat-vyper:
+    if: ${{ contains(github.repository, 'vyper') }}
     runs-on: ubuntu-22.04
     defaults:
       run:
