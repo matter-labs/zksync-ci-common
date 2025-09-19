@@ -94,6 +94,11 @@ on:
         description: 'List of apt dependencies to install'
         required: false
         default: ''
+      notify-slack:
+        type: string
+        description: 'Whether to notify Slack on release creation or failure'
+        required: false
+        default: 'true'
     outputs:
       releases_created:
         description: "Whether release-please created a new GitHub releases."
@@ -147,14 +152,14 @@ jobs:
           manifest-file: ${{ inputs.manifest }}
 
       - name: Release notification
-        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        if: ${{ steps.release.outputs.releases_created == 'true' && inputs.notify-slack == 'true' }}
         uses: matter-labs/format-release-please-for-slack-action@69e6fe9e4ec531b7b5fb0d826f73c190db83cf42 # v2.1.0
         with:
           release-please-output: ${{ toJSON(steps.release.outputs) }}
           slack-webhook-url: ${{ secrets.slack_webhook }}
 
       - name: Failure notification
-        if: failure()
+        if: ${{ failure() && inputs.notify-slack == 'true' }}
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
         with:
           webhook: ${{ secrets.slack_webhook }}
@@ -248,7 +253,7 @@ jobs:
           fi
 
       - name: Slack notification
-        if: failure()
+        if: ${{ failure() && inputs.notify-slack == 'true' }}
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
         with:
           webhook: ${{ secrets.slack_webhook }}
@@ -282,6 +287,7 @@ jobs:
           cargo_build_args: ${{ inputs.cargo_build_args }}
           run_tests: ${{ inputs.run_tests }}
           dependencies: ${{ inputs.dependencies }}
+          notify_slack: ${{ inputs.notify-slack }}
 
 
   # This job upgrades the workspace dependencies across different workspaces of one repository.
@@ -349,7 +355,7 @@ jobs:
           fi
 
       - name: Slack notification
-        if: failure()
+        if: ${{ failure() && inputs.notify-slack == 'true' }}
         uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
         with:
           webhook: ${{ secrets.slack_webhook }}
