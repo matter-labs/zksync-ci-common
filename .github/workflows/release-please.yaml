@@ -153,10 +153,11 @@ jobs:
 
       - name: Release notification
         if: ${{ steps.release.outputs.releases_created == 'true' && inputs.notify-slack == 'true' }}
-        uses: matter-labs/format-release-please-for-slack-action@69e6fe9e4ec531b7b5fb0d826f73c190db83cf42 # v2.1.0
+        uses: matter-labs/format-release-please-for-slack-action@18dadd9bb2dca040fec9ead61e1898e8fdd47ecd
         with:
           release-please-output: ${{ toJSON(steps.release.outputs) }}
           slack-webhook-url: ${{ secrets.slack_webhook }}
+          github-token: ${{ github.token }}
 
       - name: Failure notification
         if: ${{ failure() && inputs.notify-slack == 'true' }}
