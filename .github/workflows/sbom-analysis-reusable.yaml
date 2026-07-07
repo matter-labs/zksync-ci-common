@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       containers:
-        description: JSON array of {name, tag} objects for containers to run SBOM generation against, e.g. '[{"name":"app1","tag":"v1.0.0"},{"name":"app2","tag":"v2.3.1"}]'
+        description: Comma-separated list of container name:tag pairs to run SBOM generation against, e.g. 'app1:v1.0.0,app2:v2.3.1'
         required: true
         type: string
       dt_project_tags:
@@ -34,6 +34,20 @@ on:
 
 
 jobs:
+  prepare-matrix:
+    name: Parse containers input into a JSON array
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Convert containers list to JSON array
+        id: set-matrix
+        env:
+          CONTAINERS_INPUT: ${{ inputs.containers }}
+        run: |
+          matrix=$(jq -R -c 'split(",") | map(gsub("^\\s+|\\s+$";"") | split(":") | {name: .[0], tag: .[1]})' <<< "$CONTAINERS_INPUT")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   sbom-code:
     name: Generate and upload SBOM of the source code for analysis
     runs-on: ubuntu-latest
@@ -68,16 +82,15 @@ jobs:
 
   sbom-image:
     name: Generate and upload SBOM of the container images for analysis
+    needs: prepare-matrix
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
     strategy:
       matrix:
-        container: ${{ fromJSON(inputs.containers) }}
+        container: ${{ fromJSON(needs.prepare-matrix.outputs.matrix) }}
     steps:
-      - run: echo "${{ matrix.container.name }}:${{ matrix.container.tag }}"
-
       - name: Generate CycloneDX file on image analysis
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
