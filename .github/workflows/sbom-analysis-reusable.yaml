@@ -23,7 +23,10 @@ on:
         description: Tags to put on created Dependency Track projects
         required: true
         type: string
-
+      team_to_notify:
+        description: Team name to notify on project findings
+        required: true
+        type: string
     secrets:
       dtrack_api_key:
         description: API Keys for uploading SBOMs and creating projects in Dependency Track
@@ -31,7 +34,6 @@ on:
       ghcr_registry_password:
         description: GHCR registry password, used to pull freshly generated images for scanning
         required: true
-
 
 jobs:
   prepare-matrix:
@@ -75,10 +77,22 @@ jobs:
           apikey: ${{ secrets.dtrack_api_key }}
           projectname: "${{ github.event.repository.name }}-code"
           projectversion: ${{ inputs.git_version }}
-          isLatest: true
+          isLatest: false
           bomfilename: "bom-code.cdx.json"
           autocreate: true
           projecttags: ${{ inputs.dt_project_tags }}
+
+      - name: Upload CycloneDX file to Dependency Track
+        uses: DependencyTrack/gh-upload-sbom@b717d6595efa77a7ff1b18b57ac28597afc75d77 # v4.0.0
+        with:
+          serverhostname: ${{ inputs.dtrack_server_hostname }}
+          apikey: ${{ secrets.dtrack_api_key }}
+          projectname: "${{ github.event.repository.name }}-code"
+          projectversion: latest
+          isLatest: true
+          bomfilename: "bom-code.cdx.json"
+          autocreate: true
+          projecttags: "${{ inputs.dt_project_tags }},notify:${{ inputs.team_to_notify }},mutable"
 
   sbom-image:
     name: Generate and upload SBOM of the container images for analysis
@@ -91,13 +105,20 @@ jobs:
       matrix:
         container: ${{ fromJSON(needs.prepare-matrix.outputs.matrix) }}
     steps:
+      - name: Compute safe container name
+        id: safe-name
+        env:
+          CONTAINER_NAME: ${{ matrix.container.name }}
+        run: |
+          echo "name=${CONTAINER_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Generate CycloneDX file on image analysis
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: ghcr.io/matter-labs/${{ matrix.container.name }}:${{ matrix.container.tag }}
           registry-username: ${{ inputs.ghcr_registry_username }}
           registry-password: ${{ secrets.ghcr_registry_password }}
-          output-file: "bom-${{ matrix.container.name }}-image.cdx.json"
+          output-file: "bom-${{ steps.safe-name.outputs.name }}-image.cdx.json"
           format: 'cyclonedx-json@1.6'
           upload-artifact: 'false'
           upload-release-assets: 'false'
@@ -107,9 +128,21 @@ jobs:
         with:
           serverhostname: ${{ inputs.dtrack_server_hostname }}
           apikey: ${{ secrets.dtrack_api_key }}
-          projectname: "${{ matrix.container.name }}-image"
+          projectname: "${{ steps.safe-name.outputs.name }}-image"
           projectversion: ${{ matrix.container.tag }}
-          isLatest: true
-          bomfilename: "bom-${{ matrix.container.name }}-image.cdx.json"
+          isLatest: false
+          bomfilename: "bom-${{ steps.safe-name.outputs.name }}-image.cdx.json"
           autocreate: true
           projecttags: ${{ inputs.dt_project_tags }}
+
+      - name: Upload CycloneDX file to Dependency Track
+        uses: DependencyTrack/gh-upload-sbom@b717d6595efa77a7ff1b18b57ac28597afc75d77 # v4.0.0
+        with:
+          serverhostname: ${{ inputs.dtrack_server_hostname }}
+          apikey: ${{ secrets.dtrack_api_key }}
+          projectname: "${{ steps.safe-name.outputs.name }}-image"
+          projectversion: "latest"
+          isLatest: true
+          bomfilename: "bom-${{ steps.safe-name.outputs.name }}-image.cdx.json"
+          autocreate: true
+          projecttags: "${{ inputs.dt_project_tags }},notify:${{ inputs.team_to_notify }},mutable"
