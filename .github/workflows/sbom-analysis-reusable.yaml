@@ -19,7 +19,7 @@ on:
         description: Comma-separated list of container name:tag pairs to run SBOM generation against, e.g. 'app1:v1.0.0,app2:v2.3.1'
         required: true
         type: string
-      dt_project_tags:
+      dtrack_project_tags:
         description: Tags to put on created Dependency Track projects
         required: true
         type: string
@@ -80,7 +80,7 @@ jobs:
           isLatest: false
           bomfilename: "bom-code.cdx.json"
           autocreate: true
-          projecttags: ${{ inputs.dt_project_tags }}
+          projecttags: ${{ inputs.dtrack_project_tags }}
 
       - name: Upload CycloneDX file to Dependency Track latest project
         uses: DependencyTrack/gh-upload-sbom@b717d6595efa77a7ff1b18b57ac28597afc75d77 # v4.0.0
@@ -92,7 +92,7 @@ jobs:
           isLatest: true
           bomfilename: "bom-code.cdx.json"
           autocreate: true
-          projecttags: "${{ inputs.dt_project_tags }},notify:${{ inputs.team_to_notify }},mutable"
+          projecttags: "${{ inputs.dtrack_project_tags }},notify:${{ inputs.team_to_notify }},mutable"
 
   sbom-image:
     name: Generate and upload SBOM of the container images for analysis
@@ -133,7 +133,7 @@ jobs:
           isLatest: false
           bomfilename: "bom-${{ steps.safe-name.outputs.name }}-image.cdx.json"
           autocreate: true
-          projecttags: ${{ inputs.dt_project_tags }}
+          projecttags: ${{ inputs.dtrack_project_tags }}
 
       - name: Upload CycloneDX file to Dependency Track latest project
         uses: DependencyTrack/gh-upload-sbom@b717d6595efa77a7ff1b18b57ac28597afc75d77 # v4.0.0
@@ -145,4 +145,4 @@ jobs:
           isLatest: true
           bomfilename: "bom-${{ steps.safe-name.outputs.name }}-image.cdx.json"
           autocreate: true
-          projecttags: "${{ inputs.dt_project_tags }},notify:${{ inputs.team_to_notify }},mutable"
+          projecttags: "${{ inputs.dtrack_project_tags }},notify:${{ inputs.team_to_notify }},mutable"
