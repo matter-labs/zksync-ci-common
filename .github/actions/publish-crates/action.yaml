@@ -132,15 +132,19 @@ runs:
     - name: Login to registry
       shell: 'bash -ex {0}'
       working-directory: ${{ inputs.workspace_path }}
-      run: cargo login ${{ inputs.cargo_registry_token }}
+      env:
+        CARGO_REGISTRIES_STAGING_INDEX: sparse+https://index.staging.crates.io/
+      run: cargo login --registry staging ${{ inputs.cargo_registry_token }}
 
-    - name: Release packages to crates.io
+    - name: Release packages to staging.crates.io
       shell: 'bash -ex {0}'
       working-directory: ${{ inputs.workspace_path }}
+      env:
+        CARGO_REGISTRIES_STAGING_INDEX: sparse+https://index.staging.crates.io/
       run: |
         cargo workspaces --version
         [[ ${{ inputs.dry_run }} == 'true' ]] && DRY_RUN="--dry-run"
-        cargo workspaces publish ${{ steps.cargo-lock.outputs.locked }} ${DRY_RUN} --publish-as-is --allow-dirty
+        cargo workspaces publish ${{ steps.cargo-lock.outputs.locked }} ${DRY_RUN} --publish-as-is --allow-dirty --registry staging
 
     - name: Update ownership
       shell: 'bash -ex {0}'
