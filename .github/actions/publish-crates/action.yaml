@@ -140,7 +140,7 @@ runs:
       working-directory: ${{ inputs.workspace_path }}
       env:
         CARGO_REGISTRIES_STAGING_INDEX: sparse+https://index.staging.crates.io/
-        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        CARGO_REGISTRIES_STAGING_TOKEN: ${{ steps.auth.outputs.token }}
       run: |
         cargo workspaces --version
         [[ ${{ inputs.dry_run }} == 'true' ]] && DRY_RUN="--dry-run"
