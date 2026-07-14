@@ -129,18 +129,18 @@ runs:
       working-directory: ${{ inputs.workspace_path }}
       run: cargo test ${{ steps.cargo-lock.outputs.locked }} ${{ inputs.cargo_build_args }} && cargo clean
 
-    - name: Login to registry
-      shell: 'bash -ex {0}'
-      working-directory: ${{ inputs.workspace_path }}
-      env:
-        CARGO_REGISTRIES_STAGING_INDEX: sparse+https://index.staging.crates.io/
-      run: cargo login --registry staging ${{ inputs.cargo_registry_token }}
+    - name: Authenticate with custom registry
+      id: auth
+      uses: rust-lang/crates-io-auth-action@v1
+      with:
+        url: https://staging.crates.io
 
     - name: Release packages to staging.crates.io
       shell: 'bash -ex {0}'
       working-directory: ${{ inputs.workspace_path }}
       env:
         CARGO_REGISTRIES_STAGING_INDEX: sparse+https://index.staging.crates.io/
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
       run: |
         cargo workspaces --version
         [[ ${{ inputs.dry_run }} == 'true' ]] && DRY_RUN="--dry-run"
