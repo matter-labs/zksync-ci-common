@@ -8,11 +8,6 @@ inputs:
     description: 'Path to the workspace to publish.'
     default: '.'
     required: false
-  org_owner:
-    type: string
-    description: 'Organization to add as owner of the crates.'
-    required: false
-    default: 'github:matter-labs:crates-io'
   gh_token:
     type: string
     description: 'GitHub token to use for checking out the repository.'
@@ -32,10 +27,6 @@ inputs:
     description: 'Whether to run tests before release.'
     required: false
     default: 'false'
-  cargo_registry_token:
-    type: string
-    description: 'Token to use for publishing to crates.io.'
-    required: true
   slack_webhook:
     type: string
     description: 'Slack webhook to use for notifications.'
@@ -78,13 +69,13 @@ runs:
 
     - name: Checkout repository
       if: ${{ inputs.skip_checkout != 'true' }}
-      uses: actions/checkout@v4
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # actions/checkout@v7
       with:
         token: ${{ inputs.gh_token }}
         submodules: "${{ inputs.submodules }}"
 
     - name: Install Rust toolchain
-      uses: moonrepo/setup-rust@v1
+      uses: moonrepo/setup-rust@abb2d32350334249b178c401e5ec5836e0cd88d3 # moonrepo/setup-rust@v1
       env:
         # To fix rate limiting issues with GitHub API
         GITHUB_TOKEN: ${{ github.token }}
@@ -129,34 +120,23 @@ runs:
       working-directory: ${{ inputs.workspace_path }}
       run: cargo test ${{ steps.cargo-lock.outputs.locked }} ${{ inputs.cargo_build_args }} && cargo clean
 
-    - name: Login to registry
-      shell: 'bash -ex {0}'
-      working-directory: ${{ inputs.workspace_path }}
-      run: cargo login ${{ inputs.cargo_registry_token }}
+    - name: Authenticate into crates.io
+      id: auth
+      uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # rust-lang/crates-io-auth-action@v1
 
     - name: Release packages to crates.io
       shell: 'bash -ex {0}'
       working-directory: ${{ inputs.workspace_path }}
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
       run: |
         cargo workspaces --version
         [[ ${{ inputs.dry_run }} == 'true' ]] && DRY_RUN="--dry-run"
         cargo workspaces publish ${{ steps.cargo-lock.outputs.locked }} ${DRY_RUN} --publish-as-is --allow-dirty
 
-    - name: Update ownership
-      shell: 'bash -ex {0}'
-      if: success() && inputs.org-owner != '' && inputs.dry_run == 'false'
-      working-directory: ${{ inputs.workspace_path }}
-      run: |
-        # Fail on error from pipe commands
-        set -o pipefail
-        ORG_OWNER=${{ inputs.org-owner }}
-        for PKG in $(cargo ws list); do
-          cargo owner --list --quiet ${PKG} | grep ${ORG_OWNER} || cargo owner --add ${ORG_OWNER} ${PKG}
-        done
-
     - name: Slack notification
       if: failure() && inputs.notify_slack == 'true'
-      uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
+      uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@0a6a75b4b9710cc51af2207e81a0a4df98bc8a5b # matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
       with:
         webhook: ${{ inputs.slack_webhook }}
         context: 'Unable to publish to crates.io'
