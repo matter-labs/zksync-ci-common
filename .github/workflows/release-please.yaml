@@ -269,6 +269,9 @@ jobs:
     needs: release-please
     name: Publish to crates.io
     runs-on: matterlabs-ci-runner-highdisk
+    permissions:
+      contents: read
+      id-token: write
     if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.publish-to-crates-io == 'true' }}
     strategy:
       matrix:
