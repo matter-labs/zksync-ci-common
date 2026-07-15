@@ -272,7 +272,7 @@ jobs:
       max-parallel: 1 # Publish workspaces one by one to prevent possible rate limiting issues
     steps:
       - name: Publish crates
-        uses: matter-labs/zksync-ci-common/.github/actions/publish-crates@main # will be updated to commit hash with another PR
+        uses: matter-labs/zksync-ci-common/.github/actions/publish-crates@c488e5a187bfa5b667ec31061045be3ad7f3245a # main
         with:
           workspace_path: ${{ matrix.path }}
           gh_token: ${{ secrets.gh_token }}
