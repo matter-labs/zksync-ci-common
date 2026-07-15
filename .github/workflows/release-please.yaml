@@ -14,9 +14,6 @@ on:
       gh_token:
         description: 'GitHub token'
         required: true
-      cargo_registry_token:
-        description: 'Cargo registry token'
-        required: false
       slack_webhook:
         description: 'Slack webhook for notifications'
         required: false
@@ -64,11 +61,6 @@ on:
         description: 'Whether to upgrade dependencies'
         required: false
         default: 'false'
-      org-owner:
-        type: string
-        description: 'Organization to add as owner of the crates.'
-        required: false
-        default: 'github:matter-labs:crates-io'
       git-user-name:
         type: string
         description: 'Name of the user to use for git operations.'
