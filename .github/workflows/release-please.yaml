@@ -7,6 +7,7 @@ name: Release-please
 # - Publishing packages to crates.io with support for custom ownership settings.
 # - Dependency upgrades with automatic PR creation for updated components across workspaces.
 # - Slack notifications for release events and failure handling.
+# - GPG signing of all created commits, enabled via the gpg_private_key secret.
 
 on:
   workflow_call:
@@ -16,6 +17,14 @@ on:
         required: true
       slack_webhook:
         description: 'Slack webhook for notifications'
+        required: false
+      gpg_private_key:
+        description: >-
+          ASCII-armored GPG private key for signing created commits. Must be registered
+          on the GitHub account matching git-user-email. If unset, commits are unsigned.
+        required: false
+      gpg_passphrase:
+        description: 'Passphrase for the GPG private key, if any'
         required: false
     inputs:
       manifest:
@@ -159,6 +168,60 @@ jobs:
           context: 'Failed to execute release-please'
 
 
+  # Signs the head commit of each release PR via amend + force-push
+  # (release-please creates commits through the GitHub API, which leaves them unsigned).
+  # No-op if gpg_private_key is not provided.
+  sign-release-commits:
+    name: Sign release PR commits
+    runs-on: ubuntu-latest
+    needs: release-please
+    if: ${{ needs.release-please.outputs.prs_created == 'true' }}
+    env:
+      GPG_KEY_PROVIDED: ${{ secrets.gpg_private_key != '' }}
+    strategy:
+      matrix:
+        pr_branch: ${{ fromJson(needs.release-please.outputs.prs).*.headBranchName }}
+      fail-fast: false
+    steps:
+
+      - name: Checkout repository
+        if: ${{ env.GPG_KEY_PROVIDED == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.pr_branch }}
+          token: ${{ secrets.gh_token }}
+          fetch-depth: 2
+
+      - name: Import GPG key
+        if: ${{ env.GPG_KEY_PROVIDED == 'true' }}
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.gpg_private_key }}
+          passphrase: ${{ secrets.gpg_passphrase }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+
+      - name: Sign release-please commit
+        if: ${{ env.GPG_KEY_PROVIDED == 'true' }}
+        shell: 'bash -ex {0}'
+        run: |
+          git config user.name "${{ inputs.git-user-name }}"
+          git config user.email "${{ inputs.git-user-email }}"
+          if [[ "$(git log -1 --format=%G?)" == "N" ]]; then
+            git commit --amend --no-edit -S
+            git push --force-with-lease origin ${{ matrix.pr_branch }}
+          else
+            echo "HEAD commit is already signed, nothing to do."
+          fi
+
+      - name: Slack notification
+        if: ${{ failure() && inputs.notify-slack == 'true' }}
+        uses: matter-labs/zksync-ci-common/.github/actions/slack-notify-release@v1
+        with:
+          webhook: ${{ secrets.slack_webhook }}
+          context: 'Failed to sign release PR commits'
+
+
   # This job updates the Cargo.lock file for the workspace after a version update.
   # It will trigger only if the release-please job created a new release PR for a component.
   # Multiple PRs can be created depending on the release-please config and manifest files.
@@ -167,8 +230,11 @@ jobs:
   update-cargo-lock:
     name: Update Cargo.lock
     runs-on: ubuntu-latest
-    needs: release-please
+    # Waits for sign-release-commits to avoid racing its force-push.
+    needs: [release-please, sign-release-commits]
     if: ${{ needs.release-please.outputs.prs_created == 'true' && inputs.update-cargo-lock  == 'true' }}
+    env:
+      GPG_KEY_PROVIDED: ${{ secrets.gpg_private_key != '' }}
     strategy:
       matrix:
         pr_branch: ${{ fromJson(needs.release-please.outputs.prs).*.headBranchName }}
@@ -181,6 +247,15 @@ jobs:
           ref: ${{ matrix.pr_branch }}
           token: ${{ secrets.gh_token }}
           submodules: "recursive"
+
+      - name: Import GPG key
+        if: ${{ env.GPG_KEY_PROVIDED == 'true' }}
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.gpg_private_key }}
+          passphrase: ${{ secrets.gpg_passphrase }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
 
       # It will automatically check for rust-toolchain file in the repository
       - name: Install Rust toolchain
@@ -294,6 +369,8 @@ jobs:
     name: Upgrade dependencies
     runs-on: ubuntu-latest
     if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.upgrade-dependencies == 'true' }}
+    env:
+      GPG_KEY_PROVIDED: ${{ secrets.gpg_private_key != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -301,6 +378,15 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           token: ${{ secrets.gh_token }}
           submodules: "recursive"
+
+      - name: Import GPG key
+        if: ${{ env.GPG_KEY_PROVIDED == 'true' }}
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.gpg_private_key }}
+          passphrase: ${{ secrets.gpg_passphrase }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
 
       # It will automatically check for rust-toolchain file in the repository
       - name: Install Rust toolchain
