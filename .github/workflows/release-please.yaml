@@ -9,8 +9,8 @@ name: Release-please
 # - Slack notifications for release events and failure handling.
 # - Verified commits without any key material in CI: all commits are created through
 #   the GitHub API, which signs them automatically. Release-please commits are signed
-#   when gh_app_id/gh_app_private_key are set; Cargo.lock updates and dependency
-#   upgrades are committed via the API (ghcommit) and always come out signed.
+#   when MATTERLABS_BOTS_APP_ID/MATTERLABS_BOTS_PRIVATE_KEY are set; Cargo.lock updates
+#   and dependency upgrades are committed via the API (ghcommit) and always come out signed.
 
 on:
   workflow_call:
@@ -18,16 +18,15 @@ on:
       gh_token:
         description: 'GitHub token'
         required: true
-      gh_app_id:
+      MATTERLABS_BOTS_PRIVATE_KEY:
         description: >-
-          ID of a GitHub App with contents: write and pull-requests: write, installed
-          on the repository. If set (with gh_app_private_key), release-please runs with
+          Private key (PEM) of a GitHub App with contents: write and pull-requests:
+          write, installed on the repository. The App ID comes from the caller's
+          MATTERLABS_BOTS_APP_ID variable. If both are set, release-please runs with
           an App installation token, so the commits it creates through the GitHub API
           are automatically signed by GitHub. If unset, gh_token is used and
-          release-please commits are unsigned.
-        required: false
-      gh_app_private_key:
-        description: 'Private key (PEM) of the GitHub App set in gh_app_id'
+          release-please commits are unsigned. The name matches the org-level secret,
+          so callers can pass it with `secrets: inherit`.
         required: false
       slack_webhook:
         description: 'Slack webhook for notifications'
@@ -143,7 +142,7 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     env:
-      GH_APP_PROVIDED: ${{ secrets.gh_app_id != '' }}
+      GH_APP_PROVIDED: ${{ vars.MATTERLABS_BOTS_APP_ID != '' && secrets.MATTERLABS_BOTS_PRIVATE_KEY != '' }}
     outputs:
       prs_created: ${{ steps.release.outputs.prs_created }}
       releases_created: ${{ steps.release.outputs.releases_created }}
@@ -161,8 +160,8 @@ jobs:
         if: ${{ env.GH_APP_PROVIDED == 'true' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.gh_app_id }}
-          private-key: ${{ secrets.gh_app_private_key }}
+          app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
+          private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
 
       - name: Run release-please
         id: release
