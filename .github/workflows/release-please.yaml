@@ -8,26 +8,23 @@ name: Release-please
 # - Dependency upgrades with automatic PR creation for updated components across workspaces.
 # - Slack notifications for release events and failure handling.
 # - Verified commits without any key material in CI: all commits are created through
-#   the GitHub API, which signs them automatically. Release-please commits are signed
-#   when MATTERLABS_BOTS_APP_ID/MATTERLABS_BOTS_PRIVATE_KEY are set; Cargo.lock updates
-#   and dependency upgrades are committed via the API (ghcommit) and always come out signed.
+#   the GitHub API with GitHub App installation tokens (minted per job from
+#   MATTERLABS_BOTS_APP_ID/MATTERLABS_BOTS_PRIVATE_KEY), so they are signed by GitHub.
+#   App tokens are job-scoped and expire after one hour, so each job mints its own.
 
 on:
   workflow_call:
     secrets:
-      gh_token:
-        description: 'GitHub token'
-        required: true
       MATTERLABS_BOTS_PRIVATE_KEY:
         description: >-
           Private key (PEM) of a GitHub App with contents: write and pull-requests:
-          write, installed on the repository. The App ID comes from the caller's
-          MATTERLABS_BOTS_APP_ID variable. If both are set, release-please runs with
-          an App installation token, so the commits it creates through the GitHub API
-          are automatically signed by GitHub. If unset, gh_token is used and
-          release-please commits are unsigned. The name matches the org-level secret,
-          so callers can pass it with `secrets: inherit`.
-        required: false
+          write, installed on the repository and on any private repositories the
+          build needs to fetch (git dependencies, submodules). The App ID comes
+          from the caller's MATTERLABS_BOTS_APP_ID variable. All GitHub operations
+          run with App installation tokens, so the commits created through the
+          GitHub API are automatically signed by GitHub. The name matches the
+          org-level secret, so callers can pass it with `secrets: inherit`.
+        required: true
       slack_webhook:
         description: 'Slack webhook for notifications'
         required: false
@@ -141,8 +138,6 @@ jobs:
   # If the job fails, it will notify the Slack channel.
   release-please:
     runs-on: ubuntu-latest
-    env:
-      GH_APP_PROVIDED: ${{ vars.MATTERLABS_BOTS_APP_ID != '' && secrets.MATTERLABS_BOTS_PRIVATE_KEY != '' }}
     outputs:
       prs_created: ${{ steps.release.outputs.prs_created }}
       releases_created: ${{ steps.release.outputs.releases_created }}
@@ -157,7 +152,6 @@ jobs:
       # signed by GitHub, so the release PR commits come out Verified.
       - name: Generate GitHub App token
         id: app_token
-        if: ${{ env.GH_APP_PROVIDED == 'true' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
@@ -167,9 +161,9 @@ jobs:
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          # Always use an App token or gh_token to trigger workflows after tag publishing
+          # Always use an App token to trigger workflows after tag publishing
           # DO NOT use default github_token here (!)
-          token: ${{ steps.app_token.outputs.token || secrets.gh_token }}
+          token: ${{ steps.app_token.outputs.token }}
           config-file: ${{ inputs.config }}
           manifest-file: ${{ inputs.manifest }}
 
@@ -205,11 +199,22 @@ jobs:
       fail-fast: false
     steps:
 
+      # App tokens are scoped to the current repository by default; `owner` widens
+      # the scope to all repositories the App is installed on, so cargo and checkout
+      # can fetch private git dependencies and submodules.
+      - name: Generate GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
+          private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ matrix.pr_branch }}
-          token: ${{ secrets.gh_token }}
+          token: ${{ steps.app_token.outputs.token }}
           submodules: "recursive"
 
       # It will automatically check for rust-toolchain file in the repository
@@ -224,13 +229,14 @@ jobs:
 
       - name: Git config for private repositories
         env:
-          GH_TOKEN: ${{ secrets.gh_token }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
         shell: 'bash -ex {0}'
         run: |
           IS_REPO_PRIVATE=$(gh api repos/${{ github.repository }} --jq '.private')
           if [[ "${IS_REPO_PRIVATE}" == "true" ]]; then
             echo CARGO_NET_GIT_FETCH_WITH_CLI=true >> "${GITHUB_ENV}"
-            git config --global url."https://${{ secrets.gh_token }}:x-oauth-basic@github.com/".insteadOf "ssh://git@github.com/"
+            # App installation tokens authenticate over HTTPS as x-access-token
+            git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
           fi
 
       - name: Update Cargo.lock
@@ -280,7 +286,7 @@ jobs:
           repo: ${{ github.repository }}
           branch: ${{ matrix.pr_branch }}
         env:
-          GITHUB_TOKEN: ${{ secrets.gh_token }}
+          GITHUB_TOKEN: ${{ steps.app_token.outputs.token }}
 
       - name: Slack notification
         if: ${{ failure() && inputs.notify-slack == 'true' }}
@@ -308,11 +314,21 @@ jobs:
       fail-fast: false
       max-parallel: 1 # Publish workspaces one by one to prevent possible rate limiting issues
     steps:
+      # `owner` widens the token scope to all repositories the App is installed on,
+      # so the checkout inside the action can fetch private submodules.
+      - name: Generate GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
+          private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Publish crates
         uses: matter-labs/zksync-ci-common/.github/actions/publish-crates@c488e5a187bfa5b667ec31061045be3ad7f3245a # main
         with:
           workspace_path: ${{ matrix.path }}
-          gh_token: ${{ secrets.gh_token }}
+          gh_token: ${{ steps.app_token.outputs.token }}
           slack_webhook: ${{ secrets.slack_webhook }}
           run_build: ${{ inputs.run_build }}
           cargo_build_args: ${{ inputs.cargo_build_args }}
@@ -332,11 +348,21 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ needs.release-please.outputs.releases_created == 'true' && inputs.upgrade-dependencies == 'true' }}
     steps:
+      # `owner` widens the token scope to all repositories the App is installed on,
+      # so the checkout can fetch private submodules.
+      - name: Generate GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
+          private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
-          token: ${{ secrets.gh_token }}
+          token: ${{ steps.app_token.outputs.token }}
           submodules: "recursive"
 
       # It will automatically check for rust-toolchain file in the repository
@@ -373,7 +399,7 @@ jobs:
         id: upgrade_branch
         shell: 'bash -ex {0}'
         env:
-          GH_TOKEN: ${{ secrets.gh_token }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
         run: |
           if git diff --exit-code --quiet; then
             echo "changed=false" >> "${GITHUB_OUTPUT}"
@@ -394,13 +420,13 @@ jobs:
           repo: ${{ github.repository }}
           branch: ${{ steps.upgrade_branch.outputs.branch }}
         env:
-          GITHUB_TOKEN: ${{ secrets.gh_token }}
+          GITHUB_TOKEN: ${{ steps.app_token.outputs.token }}
 
       - name: Create pull request
         if: ${{ steps.upgrade_branch.outputs.changed == 'true' }}
         shell: 'bash -ex {0}'
         env:
-          GH_TOKEN: ${{ secrets.gh_token }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
         run: |
           gh pr create --title "chore: upgrade crates.io dependencies" \
             --body "Upgrade workspace dependencies to the latest versions" \
