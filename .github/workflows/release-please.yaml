@@ -15,12 +15,18 @@ name: Release-please
 on:
   workflow_call:
     secrets:
+      MATTERLABS_BOTS_APP_ID:
+        description: >-
+          App ID (or Client ID) of the GitHub App used to mint installation
+          tokens. The name matches the org-level secret, so callers can pass
+          it with `secrets: inherit`.
+        required: true
       MATTERLABS_BOTS_PRIVATE_KEY:
         description: >-
           Private key (PEM) of a GitHub App with contents: write and pull-requests:
           write, installed on the repository and on any private repositories the
           build needs to fetch (git dependencies, submodules). The App ID comes
-          from the caller's MATTERLABS_BOTS_APP_ID variable. All GitHub operations
+          from the caller's MATTERLABS_BOTS_APP_ID secret. All GitHub operations
           run with App installation tokens, so the commits created through the
           GitHub API are automatically signed by GitHub. The name matches the
           org-level secret, so callers can pass it with `secrets: inherit`.
@@ -154,7 +160,7 @@ jobs:
         id: app_token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
+          client-id: ${{ secrets.MATTERLABS_BOTS_APP_ID }}
           private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
 
       - name: Run release-please
@@ -206,7 +212,7 @@ jobs:
         id: app_token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
+          client-id: ${{ secrets.MATTERLABS_BOTS_APP_ID }}
           private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
@@ -320,7 +326,7 @@ jobs:
         id: app_token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
+          client-id: ${{ secrets.MATTERLABS_BOTS_APP_ID }}
           private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
@@ -354,7 +360,7 @@ jobs:
         id: app_token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
+          client-id: ${{ secrets.MATTERLABS_BOTS_APP_ID }}
           private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
