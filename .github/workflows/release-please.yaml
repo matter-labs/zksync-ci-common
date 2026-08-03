@@ -7,6 +7,10 @@ name: Release-please
 # - Publishing packages to crates.io with support for custom ownership settings.
 # - Dependency upgrades with automatic PR creation for updated components across workspaces.
 # - Slack notifications for release events and failure handling.
+# - Verified commits without any key material in CI: all commits are created through
+#   the GitHub API, which signs them automatically. Release-please commits are signed
+#   when MATTERLABS_BOTS_APP_ID/MATTERLABS_BOTS_PRIVATE_KEY are set; Cargo.lock updates
+#   and dependency upgrades are committed via the API (ghcommit) and always come out signed.
 
 on:
   workflow_call:
@@ -14,6 +18,16 @@ on:
       gh_token:
         description: 'GitHub token'
         required: true
+      MATTERLABS_BOTS_PRIVATE_KEY:
+        description: >-
+          Private key (PEM) of a GitHub App with contents: write and pull-requests:
+          write, installed on the repository. The App ID comes from the caller's
+          MATTERLABS_BOTS_APP_ID variable. If both are set, release-please runs with
+          an App installation token, so the commits it creates through the GitHub API
+          are automatically signed by GitHub. If unset, gh_token is used and
+          release-please commits are unsigned. The name matches the org-level secret,
+          so callers can pass it with `secrets: inherit`.
+        required: false
       slack_webhook:
         description: 'Slack webhook for notifications'
         required: false
@@ -63,12 +77,16 @@ on:
         default: 'false'
       git-user-name:
         type: string
-        description: 'Name of the user to use for git operations.'
+        description: >-
+          Deprecated, unused: commits are created through the GitHub API, so the
+          identity comes from the token. Kept so existing callers keep working.
         required: false
         default: 'zksync-era-bot'
       git-user-email:
         type: string
-        description: 'Email of the user to use for git operations.'
+        description: >-
+          Deprecated, unused: commits are created through the GitHub API, so the
+          identity comes from the token. Kept so existing callers keep working.
         required: false
         default: 'zksync-era-bot@users.noreply.github.com'
       cargo-lock-commit-message:
@@ -123,6 +141,8 @@ jobs:
   # If the job fails, it will notify the Slack channel.
   release-please:
     runs-on: ubuntu-latest
+    env:
+      GH_APP_PROVIDED: ${{ vars.MATTERLABS_BOTS_APP_ID != '' && secrets.MATTERLABS_BOTS_PRIVATE_KEY != '' }}
     outputs:
       prs_created: ${{ steps.release.outputs.prs_created }}
       releases_created: ${{ steps.release.outputs.releases_created }}
@@ -133,13 +153,23 @@ jobs:
       all: ${{ toJSON(steps.release.outputs) }}
     steps:
 
+      # Commits created through the GitHub API with an App token are automatically
+      # signed by GitHub, so the release PR commits come out Verified.
+      - name: Generate GitHub App token
+        id: app_token
+        if: ${{ env.GH_APP_PROVIDED == 'true' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.MATTERLABS_BOTS_APP_ID }}
+          private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
+
       - name: Run release-please
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          # Always use gh_token to trigger workflows after tag publishing
+          # Always use an App token or gh_token to trigger workflows after tag publishing
           # DO NOT use default github_token here (!)
-          token: ${{ secrets.gh_token }}
+          token: ${{ steps.app_token.outputs.token || secrets.gh_token }}
           config-file: ${{ inputs.config }}
           manifest-file: ${{ inputs.manifest }}
 
@@ -204,6 +234,7 @@ jobs:
           fi
 
       - name: Update Cargo.lock
+        id: update
         shell: 'bash -ex {0}'
         run: |
           BRANCH="${{ matrix.pr_branch }}"
@@ -236,14 +267,20 @@ jobs:
               ( cd "${WORKSPACE}" && cargo update --workspace )
             done
           fi
-          # Commit changes to Cargo.lock if any
-          if ! git diff --exit-code --quiet; then
-            git config user.name "${{ inputs.git-user-name }}"
-            git config user.email "${{ inputs.git-user-email }}"
-            git add .
-            git commit -m "${{ inputs.cargo-lock-commit-message }}"
-            git push --set-upstream origin ${{ matrix.pr_branch }}
-          fi
+          # Let the next step know whether there is anything to commit
+          echo "changed=$(git diff --quiet && echo 'false' || echo 'true')" >> "${GITHUB_OUTPUT}"
+
+      # Commits through the GitHub API, so the commit is signed by GitHub (Verified)
+      # without any key material in CI.
+      - name: Commit Cargo.lock changes
+        if: ${{ steps.update.outputs.changed == 'true' }}
+        uses: planetscale/ghcommit-action@a6b150b81dca5dd027baa898604418eec9e11465 # v0.2.22
+        with:
+          commit_message: ${{ inputs.cargo-lock-commit-message }}
+          repo: ${{ github.repository }}
+          branch: ${{ matrix.pr_branch }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.gh_token }}
 
       - name: Slack notification
         if: ${{ failure() && inputs.notify-slack == 'true' }}
@@ -329,24 +366,46 @@ jobs:
             done
           done
 
-      - name: Commit changes
+      # Creates the remote branch at the current (unchanged) HEAD; the actual
+      # changes are committed to it through the GitHub API in the next step,
+      # so the commit is signed by GitHub (Verified) without any key material in CI.
+      - name: Create branch for dependency upgrades
+        id: upgrade_branch
         shell: 'bash -ex {0}'
         env:
           GH_TOKEN: ${{ secrets.gh_token }}
         run: |
-          BRANCH="upgrade-crates-io-dependencies-$(date +%s)"
-          if ! git diff --exit-code --quiet; then
-            git config user.name "${{ inputs.git-user-name }}"
-            git config user.email "${{ inputs.git-user-email }}"
-            git checkout -b ${BRANCH}
-            git add .
-            git commit -m "chore: upgrade crates.io dependencies"
-            git push --set-upstream origin ${BRANCH}
-            gh pr create --title "chore: upgrade crates.io dependencies" \
-              --body "Upgrade workspace dependencies to the latest versions" \
-              --base "${{ github.event.repository.default_branch }}" \
-              --head "${BRANCH}"
+          if git diff --exit-code --quiet; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            BRANCH="upgrade-crates-io-dependencies-$(date +%s)"
+            gh api "repos/${{ github.repository }}/git/refs" \
+              -f ref="refs/heads/${BRANCH}" \
+              -f sha="$(git rev-parse HEAD)"
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+            echo "branch=${BRANCH}" >> "${GITHUB_OUTPUT}"
           fi
+
+      - name: Commit dependency upgrades
+        if: ${{ steps.upgrade_branch.outputs.changed == 'true' }}
+        uses: planetscale/ghcommit-action@a6b150b81dca5dd027baa898604418eec9e11465 # v0.2.22
+        with:
+          commit_message: 'chore: upgrade crates.io dependencies'
+          repo: ${{ github.repository }}
+          branch: ${{ steps.upgrade_branch.outputs.branch }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.gh_token }}
+
+      - name: Create pull request
+        if: ${{ steps.upgrade_branch.outputs.changed == 'true' }}
+        shell: 'bash -ex {0}'
+        env:
+          GH_TOKEN: ${{ secrets.gh_token }}
+        run: |
+          gh pr create --title "chore: upgrade crates.io dependencies" \
+            --body "Upgrade workspace dependencies to the latest versions" \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "${{ steps.upgrade_branch.outputs.branch }}"
 
       - name: Slack notification
         if: ${{ failure() && inputs.notify-slack == 'true' }}
