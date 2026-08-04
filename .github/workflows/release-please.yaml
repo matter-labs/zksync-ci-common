@@ -156,12 +156,15 @@ jobs:
 
       # Commits created through the GitHub API with an App token are automatically
       # signed by GitHub, so the release PR commits come out Verified.
+      # The token is explicitly scoped to the current repository only.
       - name: Generate GitHub App token
         id: app_token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ secrets.MATTERLABS_BOTS_APP_ID }}
           private-key: ${{ secrets.MATTERLABS_BOTS_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
 
       - name: Run release-please
         id: release
