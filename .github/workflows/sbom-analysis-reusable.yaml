@@ -12,16 +12,23 @@ on:
         required: true
         type: string
       ghcr_registry_username:
-        description: GHCR registry username, used to pull freshly generated images for scanning
-        required: true
+        description: GHCR registry username, used to pull freshly generated images for scanning. Required when containers is set
+        required: false
+        default: ''
         type: string
       containers:
-        description: Comma-separated list of container name:tag pairs to run SBOM generation against, e.g. 'app1:v1.0.0,app2:v2.3.1'
-        required: true
+        description: Comma-separated list of container name:tag pairs to run SBOM generation against, e.g. 'app1:v1.0.0,app2:v2.3.1'. Leave empty to skip container image scanning
+        required: false
+        default: ''
         type: string
       dtrack_project_tags:
         description: Tags to put on created Dependency Track projects
         required: true
+        type: string
+      dtrack_project_name:
+        description: Base name for the Dependency Track code project, defaults to the repository name
+        required: false
+        default: ''
         type: string
       team_to_notify:
         description: Team name to notify on project findings
@@ -32,12 +39,13 @@ on:
         description: API Keys for uploading SBOMs and creating projects in Dependency Track
         required: true
       ghcr_registry_password:
-        description: GHCR registry password, used to pull freshly generated images for scanning
-        required: true
+        description: GHCR registry password, used to pull freshly generated images for scanning. Required when containers is set
+        required: false
 
 jobs:
   prepare-matrix:
     name: Parse containers input into a JSON array
+    if: inputs.containers != ''
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -75,7 +83,7 @@ jobs:
         with:
           serverhostname: ${{ inputs.dtrack_server_hostname }}
           apikey: ${{ secrets.dtrack_api_key }}
-          projectname: "${{ github.event.repository.name }}-code"
+          projectname: "${{ inputs.dtrack_project_name || github.event.repository.name }}-code"
           projectversion: ${{ inputs.git_version }}
           isLatest: false
           bomfilename: "bom-code.cdx.json"
@@ -87,7 +95,7 @@ jobs:
         with:
           serverhostname: ${{ inputs.dtrack_server_hostname }}
           apikey: ${{ secrets.dtrack_api_key }}
-          projectname: "${{ github.event.repository.name }}-code"
+          projectname: "${{ inputs.dtrack_project_name || github.event.repository.name }}-code"
           projectversion: latest
           isLatest: true
           bomfilename: "bom-code.cdx.json"
