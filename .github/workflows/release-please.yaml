@@ -244,8 +244,11 @@ jobs:
           IS_REPO_PRIVATE=$(gh api repos/${{ github.repository }} --jq '.private')
           if [[ "${IS_REPO_PRIVATE}" == "true" ]]; then
             echo CARGO_NET_GIT_FETCH_WITH_CLI=true >> "${GITHUB_ENV}"
-            # App installation tokens authenticate over HTTPS as x-access-token
+            # App installation tokens authenticate over HTTPS as x-access-token.
+            # `insteadOf` is multi-valued: cover both URL styles, since Cargo git
+            # dependencies on private repos are declared either way.
             git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+            git config --global --add url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
           fi
 
       - name: Update Cargo.lock
