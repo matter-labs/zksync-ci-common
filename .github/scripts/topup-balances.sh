@@ -20,7 +20,10 @@
 #        - L2 targets: Bridgehub.requestL2TransactionDirect deposit; the L2 gas cost is
 #          taken from Bridgehub.l2TransactionBaseCost at a buffered gas price which is
 #          also pinned as the tx max fee, so the deposit can never be underfunded.
-#   6. Write a markdown report to $GITHUB_STEP_SUMMARY and exit non-zero if anything
+#      Every check and every transaction (parameters, nonce, gas price, receipt) is
+#      logged, so the job log is a complete audit trail.
+#   6. Write a markdown report to $GITHUB_STEP_SUMMARY, write a Slack payload to
+#      $SLACK_PAYLOAD_FILE when something went wrong, and exit non-zero if anything
 #      needed attention (failed tx, target that cannot be funded, low funder balance,
 #      Jarvis token about to expire).
 #
@@ -33,6 +36,7 @@
 #   JARVIS_PAYLOAD_FILE     Testing only: read the registry payload from this file instead of the API
 #   L1_RPC_URL              Sepolia JSON-RPC URL
 #   L1_CHAIN_ID             Expected L1 chain ID (default: 11155111)
+#   L1_EXPLORER_URL         Block explorer used for tx links (default: https://sepolia.etherscan.io)
 #   FUNDER_PRIVATE_KEY      Private key of the funding wallet (required unless DRY_RUN=true)
 #   FUNDER_ADDRESS          Funding wallet address; derived from the key when not set
 #   DRY_RUN                 "true" to only report what would be sent (default: false)
@@ -44,11 +48,12 @@
 #   FUNDER_GAS_RESERVE_ETH  ETH the funder must keep for L1 gas (default: 0.05)
 #   L2_GAS_LIMIT            L2 gas limit of deposit txs (default: 10000000)
 #   L2_GAS_PER_PUBDATA      L2 gas per pubdata byte of deposit txs (default: 800)
-#   GAS_PRICE_BUFFER_PERCENT  Buffer over the current L1 gas price used for deposits (default: 50)
+#   GAS_PRICE_BUFFER_PERCENT  Buffer over the current L1 gas price used as max fee (default: 50)
 #   ONLY_ECOSYSTEMS         Space-separated Jarvis ecosystem names to restrict to (default: all)
 #   SKIP_CHAINS             Space-separated Jarvis chain slugs to skip (default: none)
 #   JARVIS_TOKEN_MIN_DAYS   Fail when the Jarvis token expires sooner than this (default: 7)
 #   RPC_TIMEOUT             Seconds to wait for a single RPC call (default: 30)
+#   SLACK_PAYLOAD_FILE      Where to write the Slack Block Kit payload on failure (default: none)
 #
 # Never run this script with `set -x`: the private key is passed to cast on the command line.
 
@@ -59,6 +64,7 @@ JARVIS_API_TOKEN="${JARVIS_API_TOKEN:-}"
 JARVIS_PAYLOAD_FILE="${JARVIS_PAYLOAD_FILE:-}"
 L1_RPC_URL="${L1_RPC_URL:?L1_RPC_URL is required}"
 L1_CHAIN_ID="${L1_CHAIN_ID:-11155111}"
+L1_EXPLORER_URL="${L1_EXPLORER_URL:-https://sepolia.etherscan.io}"
 FUNDER_PRIVATE_KEY="${FUNDER_PRIVATE_KEY:-}"
 FUNDER_ADDRESS="${FUNDER_ADDRESS:-}"
 DRY_RUN="${DRY_RUN:-false}"
@@ -77,6 +83,7 @@ ONLY_ECOSYSTEMS="${ONLY_ECOSYSTEMS:-}"
 SKIP_CHAINS="${SKIP_CHAINS:-}"
 JARVIS_TOKEN_MIN_DAYS="${JARVIS_TOKEN_MIN_DAYS:-7}"
 RPC_TIMEOUT="${RPC_TIMEOUT:-30}"
+SLACK_PAYLOAD_FILE="${SLACK_PAYLOAD_FILE:-}"
 
 ETH_TOKEN_ADDRESS="0x0000000000000000000000000000000000000001"
 REQUEST_SIG="requestL2TransactionDirect((uint256,uint256,address,uint256,bytes,uint256,uint256,bytes[],address))"
@@ -84,15 +91,18 @@ REQUEST_SIG="requestL2TransactionDirect((uint256,uint256,address,uint256,bytes,u
 export BC_LINE_LENGTH=0
 
 WORKDIR="$(mktemp -d)"
-trap 'rm -rf "${WORKDIR}"' EXIT
 PAYLOAD="${WORKDIR}/jarvis.json"
 
-ERRORS=()
+ERRORS=()          # problems that make the run fail
+ACTIONS=()         # transactions sent (or that would be sent in dry-run), for the report and Slack
 REPORT_ROWS=()
 declare -A SEEN_TARGETS=()
 FUNDER_EXHAUSTED=false
-FUND_RESULT=""   # set by fund_l1/fund_l2: details for the report (success or failure reason)
-TX_HASH=""       # set by send_tx
+FUND_RESULT=""     # set by fund_l1/fund_l2: report details (success or failure reason)
+FUND_ACTION=""     # set by fund_l1/fund_l2 on success: one-line description of the transaction
+TX_HASH=""         # set by send_tx
+FUNDER_FINAL=""    # funder balance at the end of the run
+JARVIS_TOKEN_DAYS_LEFT=""
 
 # ----------------------------------------------------------------------------
 # Helpers
@@ -101,16 +111,23 @@ TX_HASH=""       # set by send_tx
 log()  { echo "$*"; }
 warn() { echo "::warning::$*" >&2; }
 err()  { echo "::error::$*" >&2; ERRORS+=("$*"); }
-die()  { echo "::error::$*" >&2; exit 1; }
+die()  { err "$*"; exit 1; }
 
 is_true() { [[ "${1,,}" == "true" || "$1" == "1" ]]; }
 
 to_wei()   { cast to-wei "$1" ether; }
-# Human-readable ETH with 4 decimals (display only).
+# Human-readable ETH / gwei (display only).
 fmt_eth()  { cast from-wei "$1" | awk '{ printf "%.4f", $1 }'; }
+fmt_gwei() { cast from-wei "$1" gwei | awk '{ printf "%.3f", $1 }'; }
+fmt_fee()  { cast from-wei "$1" | awk '{ printf "%.6f", $1 }'; }
+hex_to_dec() { [[ -n "$1" ]] && cast to-dec "$1" 2>/dev/null || echo "?"; }
 # Integer arithmetic on wei values (arbitrary precision).
 calc()     { echo "$*" | bc; }
 lt()       { [[ "$(calc "$1 < $2")" == "1" ]]; }
+
+lower()   { echo "${1,,}"; }
+is_addr() { [[ "$1" =~ ^0x[0-9a-fA-F]{40}$ ]]; }
+tx_url()  { echo "${L1_EXPLORER_URL%/}/tx/$1"; }
 
 # cast call against the L1 RPC; prints the first token of the decoded value.
 l1_call() {
@@ -123,10 +140,6 @@ balance_at() {
   local rpc="$1" addr="$2"
   timeout "${RPC_TIMEOUT}" cast balance -r "${rpc}" "${addr}" 2>/dev/null
 }
-
-lower() { echo "${1,,}"; }
-
-is_addr() { [[ "$1" =~ ^0x[0-9a-fA-F]{40}$ ]]; }
 
 in_list() {
   local needle="$1" item
@@ -144,6 +157,67 @@ report() {
   [[ "${min}" != "-" ]] && min="$(fmt_eth "${min}")"
   REPORT_ROWS+=("| $1 | $2 | \`$3\` | $4 | ${bal} | ${min} | $7 | $8 |")
 }
+
+# Slack Block Kit payload describing the problems of this run (used by the workflow
+# to notify the dedicated channel). Written on every non-zero exit.
+write_slack_payload() {
+  local title run_url="" funder_text errors_text="" actions_text=""
+  title="Sepolia balance top-up needs attention"
+  is_true "${DRY_RUN}" && title="${title} (dry run)"
+  if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
+    run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+  fi
+  funder_text="\`${FUNDER_ADDRESS:-unknown}\`"
+  [[ "${FUNDER_FINAL}" =~ ^[0-9]+$ ]] && funder_text="${funder_text}, $(fmt_eth "${FUNDER_FINAL}") ETH left"
+  if [[ ${#ERRORS[@]} -gt 0 ]]; then
+    errors_text="$(printf -- '• %s\n' "${ERRORS[@]}" | head -c 2800)"
+  else
+    errors_text="• The script exited with an error before reporting any problem; see the logs."
+  fi
+  if [[ ${#ACTIONS[@]} -gt 0 ]]; then
+    actions_text="$(printf -- '• %s\n' "${ACTIONS[@]}" | head -c 2800)"
+  fi
+  jq -n \
+    --arg title "${title}" \
+    --arg repo "${GITHUB_REPOSITORY:-local}" \
+    --arg workflow "${GITHUB_WORKFLOW:-topup-balances}" \
+    --arg funder "${funder_text}" \
+    --arg errors "${errors_text}" \
+    --arg actions "${actions_text}" \
+    --arg run_url "${run_url}" '
+    def esc: gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;");
+    {
+      text: ("🚨 " + $title),
+      blocks: (
+        [
+          { type: "header", text: { type: "plain_text", text: ("🚨 " + $title), emoji: true } },
+          { type: "section", fields: [
+              { type: "mrkdwn", text: ("*Repository:*\n`" + $repo + "`") },
+              { type: "mrkdwn", text: ("*Workflow:*\n`" + $workflow + "`") },
+              { type: "mrkdwn", text: ("*Funder:*\n" + $funder) }
+          ] },
+          { type: "section", text: { type: "mrkdwn", text: ("*Problems:*\n" + ($errors | esc)) } }
+        ]
+        + (if $actions != "" then
+            [ { type: "section", text: { type: "mrkdwn", text: ("*Transactions sent in this run:*\n" + ($actions | esc)) } } ]
+          else [] end)
+        + (if $run_url != "" then
+            [ { type: "actions", elements: [
+                { type: "button", text: { type: "plain_text", text: "View workflow logs", emoji: true }, url: $run_url, style: "danger" }
+            ] } ]
+          else [] end)
+      )
+    }' > "${SLACK_PAYLOAD_FILE}"
+}
+
+on_exit() {
+  local rc=$?
+  if [[ ${rc} -ne 0 && -n "${SLACK_PAYLOAD_FILE}" ]]; then
+    write_slack_payload || echo "::warning::Failed to write the Slack payload" >&2
+  fi
+  rm -rf "${WORKDIR}"
+}
+trap on_exit EXIT
 
 # ----------------------------------------------------------------------------
 # Preflight
@@ -185,20 +259,21 @@ done
 read -r -a ONLY_ECOSYSTEMS_ARR <<<"${ONLY_ECOSYSTEMS}"
 read -r -a SKIP_CHAINS_ARR <<<"${SKIP_CHAINS}"
 
-log "Funder:            ${FUNDER_ADDRESS}"
-log "L1 chain ID:       ${L1_CHAIN_ID}"
+funder_start="$(balance_at "${L1_RPC_URL}" "${FUNDER_ADDRESS}")" || funder_start=""
+
+log "Funder:            ${FUNDER_ADDRESS} ($( [[ "${funder_start}" =~ ^[0-9]+$ ]] && fmt_eth "${funder_start}" || echo "?") ETH)"
+log "L1 RPC chain ID:   ${L1_CHAIN_ID}"
 log "Dry run:           ${DRY_RUN}"
 log "Operator:          min ${OPERATOR_MIN_ETH} ETH, target ${OPERATOR_TARGET_ETH} ETH"
 log "Watchdog L1:       min ${WATCHDOG_L1_MIN_ETH} ETH, target ${WATCHDOG_L1_TARGET_ETH} ETH"
 log "Watchdog L2:       min ${WATCHDOG_L2_MIN_ETH} ETH, target ${WATCHDOG_L2_TARGET_ETH} ETH"
+log "Deposit params:    L2 gas limit ${L2_GAS_LIMIT}, gas per pubdata ${L2_GAS_PER_PUBDATA}, gas price buffer +${GAS_PRICE_BUFFER_PERCENT}%"
 [[ -n "${ONLY_ECOSYSTEMS}" ]] && log "Only ecosystems:   ${ONLY_ECOSYSTEMS}"
 [[ -n "${SKIP_CHAINS}" ]] && log "Skip chains:       ${SKIP_CHAINS}"
 
 # ----------------------------------------------------------------------------
 # Jarvis registry
 # ----------------------------------------------------------------------------
-
-JARVIS_TOKEN_DAYS_LEFT=""
 
 if [[ -n "${JARVIS_PAYLOAD_FILE}" ]]; then
   log "Reading Jarvis payload from ${JARVIS_PAYLOAD_FILE}"
@@ -217,6 +292,7 @@ else
     warn "Could not decode the Jarvis token expiry"
   fi
 
+  log "Fetching chain registry from ${JARVIS_API_URL%/}/api/chains/cache"
   http_code="$(curl -sS -o "${PAYLOAD}" -w '%{http_code}' --max-time 60 \
     -H "Authorization: Bearer ${JARVIS_API_TOKEN}" \
     "${JARVIS_API_URL%/}/api/chains/cache")" || die "Failed to reach Jarvis at ${JARVIS_API_URL}"
@@ -277,55 +353,89 @@ l2_rpc_of() {
 
 funder_balance() { balance_at "${L1_RPC_URL}" "${FUNDER_ADDRESS}"; }
 
-# Ensures the funder can spend <wei> plus the gas reserve. Sets FUNDER_EXHAUSTED on failure.
-funder_can_spend() {
-  local need="$1" have
-  have="$(funder_balance)" || { err "Failed to read the funder balance"; return 1; }
-  if lt "${have}" "$(calc "${need} + ${FUNDER_GAS_RESERVE_WEI}")"; then
-    FUNDER_EXHAUSTED=true
-    err "Funder ${FUNDER_ADDRESS} holds $(fmt_eth "${have}") ETH, cannot spend $(fmt_eth "${need}") ETH; skipping remaining top-ups"
-    return 1
-  fi
-}
-
 # Records a funding failure: logs it, adds it to ERRORS and to the report details.
 fund_failed() { err "$1"; FUND_RESULT="$1"; return 1; }
 
-# send_tx <description> <cast send args...>; sets TX_HASH on success.
+# Ensures the funder can spend <wei> plus the gas reserve. Sets FUNDER_EXHAUSTED on failure.
+funder_can_spend() {
+  local need="$1" have
+  have="$(funder_balance)" || { fund_failed "Failed to read the funder balance"; return 1; }
+  if lt "${have}" "$(calc "${need} + ${FUNDER_GAS_RESERVE_WEI}")"; then
+    FUNDER_EXHAUSTED=true
+    fund_failed "Funder ${FUNDER_ADDRESS} holds $(fmt_eth "${have}") ETH, cannot spend $(fmt_eth "${need}") ETH; skipping remaining top-ups"
+    return 1
+  fi
+  log "     funder balance $(fmt_eth "${have}") ETH, ok to spend $(fmt_eth "${need}") ETH"
+}
+
+# Current L1 gas price plus the configured buffer, used as the max fee of every tx.
+# Sets GAS_PRICE and MAX_FEE.
+GAS_PRICE=""
+MAX_FEE=""
+refresh_gas_price() {
+  GAS_PRICE="$(timeout "${RPC_TIMEOUT}" cast gas-price -r "${L1_RPC_URL}" 2>/dev/null)" || { fund_failed "Failed to fetch the L1 gas price"; return 1; }
+  MAX_FEE="$(calc "${GAS_PRICE} * (100 + ${GAS_PRICE_BUFFER_PERCENT}) / 100")"
+  log "     L1 gas price $(fmt_gwei "${GAS_PRICE}") gwei, max fee for this tx $(fmt_gwei "${MAX_FEE}") gwei (+${GAS_PRICE_BUFFER_PERCENT}%)"
+}
+
+# send_tx <description> <max fee wei> <value wei> <to> [<sig> <args>]; sets TX_HASH.
 send_tx() {
-  local what="$1" receipt status
-  shift
+  local what="$1" max_fee="$2" value="$3" to="$4"
+  shift 4
+  local nonce receipt status block gas_used eff_price fee
   TX_HASH=""
-  if ! receipt="$(cast send --json -r "${L1_RPC_URL}" --private-key "${FUNDER_PRIVATE_KEY}" --timeout 300 "$@" 2>&1)"; then
+  nonce="$(timeout "${RPC_TIMEOUT}" cast nonce -r "${L1_RPC_URL}" "${FUNDER_ADDRESS}" 2>/dev/null || echo "?")"
+  log "  -> sending ${what}"
+  log "     from ${FUNDER_ADDRESS} (nonce ${nonce}) to ${to}, value $(fmt_eth "${value}") ETH (${value} wei), max fee $(fmt_gwei "${max_fee}") gwei"
+  [[ $# -ge 2 ]] && log "     call ${1%%(*}$2"
+  if ! receipt="$(cast send --json -r "${L1_RPC_URL}" --private-key "${FUNDER_PRIVATE_KEY}" --timeout 300 \
+                    --gas-price "${max_fee}" --value "${value}" "${to}" "$@" 2>&1)"; then
     fund_failed "${what}: cast send failed: $(tail -c 400 <<<"${receipt}")"
     return 1
   fi
   status="$(jq -r '.status // empty' <<<"${receipt}" 2>/dev/null || true)"
   TX_HASH="$(jq -r '.transactionHash // empty' <<<"${receipt}" 2>/dev/null || true)"
+  block="$(hex_to_dec "$(jq -r '.blockNumber // empty' <<<"${receipt}" 2>/dev/null || true)")"
+  gas_used="$(hex_to_dec "$(jq -r '.gasUsed // empty' <<<"${receipt}" 2>/dev/null || true)")"
+  eff_price="$(hex_to_dec "$(jq -r '.effectiveGasPrice // empty' <<<"${receipt}" 2>/dev/null || true)")"
   if [[ "${status}" != "0x1" && "${status}" != "1" ]]; then
-    fund_failed "${what}: transaction ${TX_HASH:-?} reverted (status ${status:-unknown})"
+    fund_failed "${what}: transaction ${TX_HASH:-?} reverted (status ${status:-unknown}), $(tx_url "${TX_HASH:-}")"
     return 1
   fi
+  if [[ "${gas_used}" =~ ^[0-9]+$ && "${eff_price}" =~ ^[0-9]+$ ]]; then
+    fee="$(fmt_fee "$(calc "${gas_used} * ${eff_price}")") ETH"
+    eff_price="$(fmt_gwei "${eff_price}") gwei"
+  else
+    fee="?"
+  fi
+  log "     confirmed in block ${block}: tx ${TX_HASH}, gas used ${gas_used}, effective gas price ${eff_price}, L1 fee ${fee}"
+  log "     $(tx_url "${TX_HASH}")"
 }
 
-# fund_l1 <to> <amount wei>; sets FUND_RESULT.
+# fund_l1 <to> <amount wei>; sets FUND_RESULT and FUND_ACTION.
 fund_l1() {
   local to="$1" amount="$2"
   FUND_RESULT=""
+  FUND_ACTION=""
   funder_can_spend "${amount}" || { FUND_RESULT="funder exhausted"; return 1; }
+  refresh_gas_price || return 1
   if is_true "${DRY_RUN}"; then
-    FUND_RESULT="dry-run: would transfer $(fmt_eth "${amount}") ETH on L1"
+    FUND_RESULT="dry-run: would transfer $(fmt_eth "${amount}") ETH on L1 at max fee $(fmt_gwei "${MAX_FEE}") gwei"
+    FUND_ACTION="dry run: would transfer $(fmt_eth "${amount}") ETH to ${to} on L1"
+    log "  -> dry run: would send L1 transfer of $(fmt_eth "${amount}") ETH from ${FUNDER_ADDRESS} to ${to}"
     return 0
   fi
-  send_tx "L1 transfer of $(fmt_eth "${amount}") ETH to ${to}" --value "${amount}" "${to}" || return 1
-  FUND_RESULT="sent $(fmt_eth "${amount}") ETH, tx ${TX_HASH}"
+  send_tx "L1 transfer of $(fmt_eth "${amount}") ETH" "${MAX_FEE}" "${amount}" "${to}" || return 1
+  FUND_RESULT="sent $(fmt_eth "${amount}") ETH, tx [${TX_HASH:0:10}…]($(tx_url "${TX_HASH}"))"
+  FUND_ACTION="transferred $(fmt_eth "${amount}") ETH to ${to} on L1, $(tx_url "${TX_HASH}")"
 }
 
-# fund_l2 <bridgehub> <target chain id> <to> <amount wei>; sets FUND_RESULT.
+# fund_l2 <bridgehub> <target chain id> <to> <amount wei>; sets FUND_RESULT and FUND_ACTION.
 fund_l2() {
   local bridgehub="$1" chain_id="$2" to="$3" amount="$4"
-  local base_token gas_price buffered_gas_price base_cost mint_value
+  local base_token base_cost mint_value
   FUND_RESULT=""
+  FUND_ACTION=""
 
   base_token="$(l1_call "${bridgehub}" "baseToken(uint256)(address)" "${chain_id}")" || true
   if [[ "$(lower "${base_token:-}")" != "${ETH_TOKEN_ADDRESS}" ]]; then
@@ -333,44 +443,50 @@ fund_l2() {
     return 1
   fi
 
-  gas_price="$(timeout "${RPC_TIMEOUT}" cast gas-price -r "${L1_RPC_URL}")" || { fund_failed "Failed to fetch the L1 gas price"; return 1; }
-  buffered_gas_price="$(calc "${gas_price} * (100 + ${GAS_PRICE_BUFFER_PERCENT}) / 100")"
+  refresh_gas_price || return 1
   base_cost="$(l1_call "${bridgehub}" "l2TransactionBaseCost(uint256,uint256,uint256,uint256)(uint256)" \
-    "${chain_id}" "${buffered_gas_price}" "${L2_GAS_LIMIT}" "${L2_GAS_PER_PUBDATA}")" || true
+    "${chain_id}" "${MAX_FEE}" "${L2_GAS_LIMIT}" "${L2_GAS_PER_PUBDATA}")" || true
   [[ "${base_cost}" =~ ^[0-9]+$ ]] || { fund_failed "Failed to compute l2TransactionBaseCost for chain ${chain_id}"; return 1; }
   mint_value="$(calc "${amount} + ${base_cost}")"
+  log "     deposit via Bridgehub ${bridgehub} to chain ${chain_id}: l2Value $(fmt_eth "${amount}") ETH, L2 gas cost $(fmt_eth "${base_cost}") ETH" \
+      "(limit ${L2_GAS_LIMIT}, ${L2_GAS_PER_PUBDATA} gas/pubdata byte, at $(fmt_gwei "${MAX_FEE}") gwei), mintValue $(fmt_eth "${mint_value}") ETH, refund recipient ${to}"
 
   funder_can_spend "${mint_value}" || { FUND_RESULT="funder exhausted"; return 1; }
   if is_true "${DRY_RUN}"; then
     FUND_RESULT="dry-run: would deposit $(fmt_eth "${amount}") ETH via ${bridgehub} (mintValue $(fmt_eth "${mint_value}") ETH incl. L2 gas)"
+    FUND_ACTION="dry run: would deposit $(fmt_eth "${amount}") ETH to ${to} on chain ${chain_id}"
+    log "  -> dry run: would send deposit of $(fmt_eth "${amount}") ETH from ${FUNDER_ADDRESS} to ${to} on chain ${chain_id}"
     return 0
   fi
   # The max fee is pinned to the gas price used for the base cost, so tx.gasprice on
   # L1 can never exceed it and mintValue always covers l2Value + L2 gas.
-  send_tx "Deposit of $(fmt_eth "${amount}") ETH to ${to} on chain ${chain_id}" \
-    --gas-price "${buffered_gas_price}" --value "${mint_value}" "${bridgehub}" "${REQUEST_SIG}" \
+  send_tx "deposit of $(fmt_eth "${amount}") ETH to chain ${chain_id}" "${MAX_FEE}" "${mint_value}" "${bridgehub}" "${REQUEST_SIG}" \
     "(${chain_id},${mint_value},${to},${amount},0x,${L2_GAS_LIMIT},${L2_GAS_PER_PUBDATA},[],${to})" || return 1
-  FUND_RESULT="deposited $(fmt_eth "${amount}") ETH (mintValue $(fmt_eth "${mint_value}") ETH), tx ${TX_HASH}"
+  FUND_RESULT="deposited $(fmt_eth "${amount}") ETH (mintValue $(fmt_eth "${mint_value}") ETH), tx [${TX_HASH:0:10}…]($(tx_url "${TX_HASH}"))"
+  FUND_ACTION="deposited $(fmt_eth "${amount}") ETH to ${to} on chain ${chain_id} (mintValue $(fmt_eth "${mint_value}") ETH), $(tx_url "${TX_HASH}")"
 }
 
 # ----------------------------------------------------------------------------
 # Targets
 # ----------------------------------------------------------------------------
 
-# ensure_balance <chain> <label> <address> <target chain id> <balance wei|""> <min wei> <target wei> <bridgehub>
+# ensure_balance <chain> <label> <address> <target chain id> <balance wei|""> <balance source> <min wei> <target wei> <bridgehub>
 ensure_balance() {
-  local chain="$1" label="$2" addr="$3" target_chain="$4" balance="$5" min="$6" target="$7" bridgehub="$8"
-  local key need
+  local chain="$1" label="$2" addr="$3" target_chain="$4" balance="$5" source="$6" min="$7" target="$8" bridgehub="$9"
+  local key need prefix
 
   [[ "${min}" == "0" ]] && return 0
+  prefix="${chain}/${label}:"
 
   if ! is_addr "${addr}"; then
+    log "${prefix} no address, skipped"
     report "${chain}" "${label}" "${addr:-?}" "${target_chain}" "-" "${min}" "skipped" "no address"
     return 0
   fi
 
   key="${target_chain}:$(lower "${addr}")"
   if [[ -n "${SEEN_TARGETS[${key}]:-}" ]]; then
+    log "${prefix} ${addr} on chain ${target_chain} already checked as ${SEEN_TARGETS[${key}]}, skipped"
     report "${chain}" "${label}" "${addr}" "${target_chain}" "-" "${min}" "skipped" "same as ${SEEN_TARGETS[${key}]}"
     return 0
   fi
@@ -383,14 +499,16 @@ ensure_balance() {
   fi
 
   if ! lt "${balance}" "${min}"; then
+    log "${prefix} ${addr} on chain ${target_chain} has $(fmt_eth "${balance}") ETH (${source}), min $(fmt_eth "${min}") ETH, ok"
     report "${chain}" "${label}" "${addr}" "${target_chain}" "${balance}" "${min}" "ok" ""
     return 0
   fi
 
   need="$(calc "${target} - ${balance}")"
-  log "${chain}/${label}: ${addr} on chain ${target_chain} has $(fmt_eth "${balance}") ETH < $(fmt_eth "${min}") ETH, topping up by $(fmt_eth "${need}") ETH"
+  log "${prefix} ${addr} on chain ${target_chain} has $(fmt_eth "${balance}") ETH (${source}), BELOW min $(fmt_eth "${min}") ETH; topping up by $(fmt_eth "${need}") ETH to reach $(fmt_eth "${target}") ETH"
 
   if is_true "${FUNDER_EXHAUSTED}"; then
+    log "  -> skipped, the funder is exhausted"
     report "${chain}" "${label}" "${addr}" "${target_chain}" "${balance}" "${min}" "error" "funder exhausted"
     return 0
   fi
@@ -400,6 +518,7 @@ ensure_balance() {
   else
     fund_l2 "${bridgehub}" "${target_chain}" "${addr}" "${need}" || { report "${chain}" "${label}" "${addr}" "${target_chain}" "${balance}" "${min}" "error" "${FUND_RESULT}"; return 0; }
   fi
+  ACTIONS+=("${chain}/${label}: ${FUND_ACTION}")
   report "${chain}" "${label}" "${addr}" "${target_chain}" "${balance}" "${min}" "topped up" "${FUND_RESULT}"
 }
 
@@ -436,59 +555,73 @@ while IFS="${FS}" read -r chain ecosystem chain_id diamond l2_rpc watchdog cache
   settlement_layer="$(l1_call "${bridgehub}" "settlementLayer(uint256)(uint256)" "${chain_id}")" || true
   [[ "${settlement_layer}" =~ ^[0-9]+$ ]] || settlement_layer="${L1_CHAIN_ID}"
   processed=$((processed + 1))
-  log "${chain} (${ecosystem}, chain ${chain_id}): bridgehub ${bridgehub}, settlement layer ${settlement_layer}"
+  log ""
+  log "=== ${chain} (${ecosystem}, chain ${chain_id}): diamond proxy ${diamond}, bridgehub ${bridgehub}, settlement layer ${settlement_layer}"
 
   # Operators live on the settlement layer.
   if [[ "${settlement_layer}" == "${L1_CHAIN_ID}" ]]; then
     sl_rpc="${L1_RPC_URL}"
+    sl_source="live L1 RPC"
   else
     sl_rpc="$(l2_rpc_of "${ecosystem}" "${settlement_layer}")"
+    sl_source="live settlement layer RPC"
   fi
   for role_spec in "commit:${op_commit}:${cached_commit}" "prove:${op_prove}:${cached_prove}" "execute:${op_execute}:${cached_execute}"; do
     IFS=: read -r role op_addr cached_bal <<<"${role_spec}"
     bal=""
+    source="${sl_source}"
     if is_addr "${op_addr}"; then
       if [[ -n "${sl_rpc}" ]]; then
         bal="$(balance_at "${sl_rpc}" "${op_addr}")" || bal=""
       fi
-      [[ "${bal}" =~ ^[0-9]+$ ]] || bal="${cached_bal}"
+      if [[ ! "${bal}" =~ ^[0-9]+$ ]]; then
+        bal="${cached_bal}"
+        source="Jarvis cache"
+      fi
     fi
-    ensure_balance "${chain}" "${role} operator" "${op_addr}" "${settlement_layer}" "${bal}" \
+    ensure_balance "${chain}" "${role} operator" "${op_addr}" "${settlement_layer}" "${bal}" "${source}" \
       "${OPERATOR_MIN_WEI}" "${OPERATOR_TARGET_WEI}" "${bridgehub}"
   done
 
   # Watchdog on L1 and L2.
   if is_addr "${watchdog}"; then
     bal="$(balance_at "${L1_RPC_URL}" "${watchdog}")" || bal=""
-    ensure_balance "${chain}" "watchdog L1" "${watchdog}" "${L1_CHAIN_ID}" "${bal}" \
+    ensure_balance "${chain}" "watchdog L1" "${watchdog}" "${L1_CHAIN_ID}" "${bal}" "live L1 RPC" \
       "${WATCHDOG_L1_MIN_WEI}" "${WATCHDOG_L1_TARGET_WEI}" "${bridgehub}"
 
     bal=""
+    source="live L2 RPC"
     if [[ -n "${l2_rpc}" ]]; then
       bal="$(balance_at "${l2_rpc}" "${watchdog}")" || bal=""
     fi
     if [[ ! "${bal}" =~ ^[0-9]+$ ]]; then
-      [[ -n "${cached_wd_l2}" ]] && log "${chain}: L2 RPC unavailable, using the Jarvis cached watchdog balance"
+      log "${chain}: L2 RPC ${l2_rpc:-<none>} unavailable, falling back to the Jarvis cached watchdog balance"
       bal="${cached_wd_l2}"
+      source="Jarvis cache"
     fi
-    ensure_balance "${chain}" "watchdog L2" "${watchdog}" "${chain_id}" "${bal}" \
+    ensure_balance "${chain}" "watchdog L2" "${watchdog}" "${chain_id}" "${bal}" "${source}" \
       "${WATCHDOG_L2_MIN_WEI}" "${WATCHDOG_L2_TARGET_WEI}" "${bridgehub}"
   else
     log "${chain}: no watchdog address in Jarvis"
   fi
 done < "${CANDIDATES}"
 
+log ""
 [[ "${processed}" -gt 0 ]] || err "No Sepolia-based chains found in the Jarvis registry; check the registry and filters"
 
 # ----------------------------------------------------------------------------
 # Funder health and token lifetime (checked last so top-ups always run first)
 # ----------------------------------------------------------------------------
 
-funder_final="$(funder_balance)" || funder_final=""
-if [[ "${funder_final}" =~ ^[0-9]+$ ]]; then
-  log "Funder balance:    $(fmt_eth "${funder_final}") ETH"
-  if lt "${funder_final}" "${FUNDER_MIN_WEI}"; then
-    err "Funder ${FUNDER_ADDRESS} holds $(fmt_eth "${funder_final}") ETH, below the ${FUNDER_MIN_ETH} ETH minimum; please refill it"
+FUNDER_FINAL="$(funder_balance)" || FUNDER_FINAL=""
+if [[ "${FUNDER_FINAL}" =~ ^[0-9]+$ ]]; then
+  if [[ "${funder_start}" =~ ^[0-9]+$ ]]; then
+    log "Funder balance:    $(fmt_eth "${FUNDER_FINAL}") ETH (spent $(fmt_eth "$(calc "${funder_start} - ${FUNDER_FINAL}")") ETH in this run)"
+  else
+    log "Funder balance:    $(fmt_eth "${FUNDER_FINAL}") ETH"
+  fi
+  if lt "${FUNDER_FINAL}" "${FUNDER_MIN_WEI}"; then
+    err "Funder ${FUNDER_ADDRESS} holds $(fmt_eth "${FUNDER_FINAL}") ETH, below the ${FUNDER_MIN_ETH} ETH minimum; please refill it"
   fi
 else
   err "Failed to read the final funder balance"
@@ -505,7 +638,7 @@ fi
 {
   echo "## Balance top-up report"
   echo
-  echo "Funder \`${FUNDER_ADDRESS}\`: $( [[ "${funder_final}" =~ ^[0-9]+$ ]] && fmt_eth "${funder_final}" || echo "?" ) ETH"
+  echo "Funder \`${FUNDER_ADDRESS}\`: $( [[ "${FUNDER_FINAL}" =~ ^[0-9]+$ ]] && fmt_eth "${FUNDER_FINAL}" || echo "?" ) ETH"
   is_true "${DRY_RUN}" && echo "" && echo "**Dry run: no transactions were sent.**"
   [[ -n "${JARVIS_TOKEN_DAYS_LEFT}" ]] && echo "" && echo "Jarvis token expires in ${JARVIS_TOKEN_DAYS_LEFT} day(s)."
   echo
@@ -514,6 +647,12 @@ fi
   printf '%s\n' "${REPORT_ROWS[@]}"
   echo
   echo "Balances are in ETH, or in the chain's base token for L2 targets of custom-base-token chains."
+  if [[ ${#ACTIONS[@]} -gt 0 ]]; then
+    echo
+    echo "### Transactions"
+    echo
+    printf -- '- %s\n' "${ACTIONS[@]}"
+  fi
   if [[ ${#ERRORS[@]} -gt 0 ]]; then
     echo
     echo "### Errors"
