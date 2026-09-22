@@ -40,10 +40,6 @@ export interface Config {
   jarvisTokenMinDays: number;
   rpcTimeoutMs: number;
   txTimeoutMs: number;
-  /** Where to write the Slack payload when the run fails. */
-  slackPayloadFile?: string;
-  /** GitHub job summary file. */
-  stepSummaryFile?: string;
 }
 
 export class ConfigError extends Error {}
@@ -58,7 +54,7 @@ const DEFAULTS: Record<string, string> = {
   WATCHDOG_L1_TARGET_ETH: '0.5',
   WATCHDOG_L2_MIN_ETH: '0.5',
   WATCHDOG_L2_TARGET_ETH: '1.5',
-  FUNDER_MIN_ETH: '5',
+  FUNDER_MIN_ETH: '20',
   FUNDER_GAS_RESERVE_ETH: '0.05',
   L2_GAS_LIMIT: '10000000',
   L2_GAS_PER_PUBDATA: '800',
@@ -68,12 +64,16 @@ const DEFAULTS: Record<string, string> = {
   TX_TIMEOUT: '300',
 };
 
+/** DRY_RUN=true (or 1): check balances and report, never sign a transaction. */
+export function isDryRun(env: NodeJS.ProcessEnv = process.env): boolean {
+  return ['true', '1'].includes((env['DRY_RUN'] ?? '').trim().toLowerCase());
+}
+
 /** Reads the configuration from environment variables (documented in README.md). */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const get = (name: string): string => (env[name] ?? '').trim() || (DEFAULTS[name] ?? '');
   const optional = (name: string): string | undefined => get(name) || undefined;
   const list = (name: string): string[] => get(name).split(/\s+/).filter(Boolean);
-  const flag = (name: string): boolean => ['true', '1'].includes(get(name).toLowerCase());
 
   const eth = (name: string): bigint => {
     const raw = get(name);
@@ -99,7 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const l1RpcUrl = get('L1_RPC_URL');
   if (!l1RpcUrl) throw new ConfigError('L1_RPC_URL is required');
 
-  const dryRun = flag('DRY_RUN');
+  const dryRun = isDryRun(env);
   const funderPrivateKey = optional('FUNDER_PRIVATE_KEY');
   const funderAddress = optional('FUNDER_ADDRESS');
   if (!dryRun && !funderPrivateKey) throw new ConfigError('FUNDER_PRIVATE_KEY is required unless DRY_RUN=true');
@@ -130,7 +130,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     jarvisTokenMinDays: Number(integer('JARVIS_TOKEN_MIN_DAYS')),
     rpcTimeoutMs: Number(integer('RPC_TIMEOUT')) * 1000,
     txTimeoutMs: Number(integer('TX_TIMEOUT')) * 1000,
-    slackPayloadFile: optional('SLACK_PAYLOAD_FILE'),
-    stepSummaryFile: optional('GITHUB_STEP_SUMMARY'),
   };
 }

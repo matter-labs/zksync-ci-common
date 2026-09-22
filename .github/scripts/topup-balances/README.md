@@ -9,7 +9,11 @@ Tracked in [PLA-1425](https://linear.app/matterlabs/issue/PLA-1425).
 1. Loads the chain registry from Jarvis (`GET /api/chains/cache`).
 2. Keeps chains in state `normal` whose L1 diamond proxy lives on Sepolia: `getBridgehub()`
    must answer on the diamond proxy, and that Bridgehub must map the chain ID back to it.
-   Mainnet chains drop out here because their contracts hold no code on Sepolia.
+   Mainnet chains drop out here because their contracts hold no code on Sepolia. Only
+   contract-side errors (no code, unknown function, revert) mean "not on Sepolia"; RPC
+   transport errors are reported and the chain is retried next run. A Bridgehub that maps
+   the chain ID to a different diamond proxy than Jarvis lists is reported as an error,
+   since the registry and the chain disagree.
 3. Collects the funding targets of every chain:
    - the commit, prove and execute operators on the settlement layer, resolved with the same
      precedence as the Jarvis dashboard (sender of the last tx, service-discovered, manually
@@ -29,7 +33,12 @@ Tracked in [PLA-1425](https://linear.app/matterlabs/issue/PLA-1425).
      tx max fee, so the deposit can never be underfunded; the surplus is refunded on L2.
    Every check and every transaction (parameters, nonce, gas price, receipt, explorer link)
    is logged, so the job log is a complete audit trail. An address shared by several roles
-   or chains is funded once.
+   or chains is funded once (it is re-checked only when a later target applies a higher
+   minimum). Nothing is sent while an earlier transaction of the funder is still pending,
+   and a transaction that is not confirmed within `TX_TIMEOUT` stops all further sends of
+   the run: queueing behind a stuck transaction could fund the same target twice. A top-up
+   the funder cannot afford is reported, and larger top-ups are skipped for the rest of the
+   run while smaller ones are still attempted.
 6. Writes a markdown report to the job summary and, when anything needs attention, a Slack
    payload that the workflow posts to the dedicated channel. The run fails on: a reverted
    or failed transaction, a target below threshold that cannot be funded (for example a
@@ -38,6 +47,9 @@ Tracked in [PLA-1425](https://linear.app/matterlabs/issue/PLA-1425).
 
 Only ETH-based targets can be funded. Custom-base-token chains still get their operators
 funded on L1; their L2 watchdog is reported as an error when it is low.
+
+`DRY_RUN=true` checks and reports everything but never signs a transaction, even when a
+funder key is configured.
 
 ## Configuration
 
@@ -57,7 +69,7 @@ Everything comes from environment variables. Amounts are in ETH and may have dec
 | `OPERATOR_MIN_ETH` / `OPERATOR_TARGET_ETH` | `5` / `10` | Operator thresholds |
 | `WATCHDOG_L1_MIN_ETH` / `WATCHDOG_L1_TARGET_ETH` | `0.2` / `0.5` | Watchdog L1 thresholds |
 | `WATCHDOG_L2_MIN_ETH` / `WATCHDOG_L2_TARGET_ETH` | `0.5` / `1.5` | Watchdog L2 thresholds |
-| `FUNDER_MIN_ETH` | `5` | Fail when the funder ends the run below this |
+| `FUNDER_MIN_ETH` | `20` | Fail when the funder ends the run below this (two operator top-ups) |
 | `FUNDER_GAS_RESERVE_ETH` | `0.05` | ETH the funder keeps for L1 gas |
 | `L2_GAS_LIMIT` | `10000000` | L2 gas limit of deposits |
 | `L2_GAS_PER_PUBDATA` | `800` | L2 gas per pubdata byte of deposits |
@@ -90,7 +102,8 @@ npm run typecheck
 npm test
 ```
 
-Source layout:
+The workflow runs both before every real run, so code that does not type-check or fails its
+tests never touches the funder wallet. Source layout:
 
 - `src/main.ts`: the run (chain selection, targets, thresholds, exit code)
 - `src/jarvis.ts`: registry types, loading, operator resolution
@@ -98,3 +111,4 @@ Source layout:
 - `src/funding.ts`: L1 transfers and Bridgehub deposits with detailed logging
 - `src/report.ts`: job summary and Slack payload
 - `src/config.ts`: environment parsing and validation
+- `src/targets.ts`: remembers handled (chain, address) pairs so shared addresses are funded once

@@ -4,8 +4,8 @@
  */
 import type { JsonRpcProvider } from 'ethers';
 
-import { ProviderPool, createProvider, inspectChainOnL1, readBalance, type Bridgehub } from './chain.ts';
-import { loadConfig, type Config, type Thresholds } from './config.ts';
+import { ProviderPool, createProvider, inspectChainOnL1, type Bridgehub } from './chain.ts';
+import { isDryRun, loadConfig, type Config, type Thresholds } from './config.ts';
 import { eth } from './format.ts';
 import { Funder, FundingError } from './funding.ts';
 import {
@@ -20,26 +20,28 @@ import {
 } from './jarvis.ts';
 import * as log from './log.ts';
 import { Report, githubContext, type RowAction } from './report.ts';
+import { SeenTargets } from './targets.ts';
+
+/** A balance read attempt: `balance` is undefined when it could not be read, and `source` then says why. */
+interface BalanceRead {
+  balance?: bigint;
+  source: string;
+}
 
 /** One balance to keep above its threshold. */
-interface Target {
+interface Target extends BalanceRead {
   chain: string;
   label: string;
   address: string | undefined;
   /** Chain the balance lives on: the settlement layer for operators, L1 or the chain itself for the watchdog. */
   chainId: bigint;
-  /** Live balance; undefined when it could not be read, which is an error and never a top-up. */
-  balance: bigint | undefined;
-  /** Where the balance was read from, for the log. */
-  source: string;
   thresholds: Thresholds;
   /** L1 Bridgehub of the chain's ecosystem, used for L2 deposits. */
   bridgehub: Bridgehub;
 }
 
 class Run {
-  /** Targets already handled, keyed by chain ID and address, so shared operators are funded once. */
-  private readonly seen = new Map<string, string>();
+  private readonly seen = new SeenTargets();
   private readonly l1ChainId: bigint;
   private chainsChecked = 0;
 
@@ -57,7 +59,15 @@ class Run {
   async execute(): Promise<void> {
     const selection = selectChains(this.registry, this.config);
     for (const skipped of selection.skipped) log.info(`${skipped.chain}: skipped (${skipped.reason})`);
-    for (const chain of selection.selected) await this.checkChain(chain);
+
+    for (const chain of selection.selected) {
+      try {
+        await this.checkChain(chain);
+      } catch (err) {
+        // Transport errors while inspecting the chain on L1: report and continue with the next one.
+        this.report.error(`${chain.chain}: could not check the chain on L1: ${log.errorMessage(err)}`);
+      }
+    }
 
     if (this.chainsChecked === 0) {
       this.report.error('No Sepolia-based chains found in the Jarvis registry; check the registry and filters');
@@ -75,7 +85,12 @@ class Run {
     const chainId = BigInt(chain.chainId);
     const inspection = await inspectChainOnL1(this.l1, this.l1ChainId, chainId, diamondProxy);
     if (!inspection.onL1) {
-      (inspection.suspicious ? log.warning : log.info)(`${chain.chain}: skipped (${inspection.reason})`);
+      if (inspection.suspicious) {
+        // The registry and the chain disagree; somebody has to look at the registry entry.
+        this.report.error(`${chain.chain}: ${inspection.reason}; check the Jarvis registry`);
+      } else {
+        log.info(`${chain.chain}: skipped (${inspection.reason})`);
+      }
       return;
     }
     this.chainsChecked += 1;
@@ -91,27 +106,18 @@ class Run {
     // Balances are only ever read live; the Jarvis cache is never used, since a stale
     // cache could make the job fund the same wallet over and over.
     const settlesOnL1 = settlementLayer === this.l1ChainId;
-    const settlementRpc = settlesOnL1
-      ? this.config.l1RpcUrl
-      : l2RpcUrlOf(this.registry, chain.ecosystem, settlementLayer);
-    let settlementSource = 'L1 RPC';
-    if (!settlesOnL1) {
-      settlementSource = settlementRpc
-        ? `settlement layer RPC ${settlementRpc}`
-        : `no RPC in Jarvis for settlement layer ${settlementLayer}`;
-    }
+    const settlementRpc = settlesOnL1 ? undefined : l2RpcUrlOf(this.registry, chain.ecosystem, settlementLayer);
     for (const role of OPERATOR_ROLES) {
       const address = resolveOperator(role, chain, data);
+      const read = settlesOnL1
+        ? await this.l1Balance(address)
+        : await this.l2Balance(settlementRpc, settlementLayer, address, 'settlement layer');
       await this.ensure({
+        ...read,
         chain: chain.chain,
         label: `${role} operator`,
         address,
         chainId: settlementLayer,
-        balance:
-          address && settlementRpc
-            ? await readBalance(this.providers.get(settlementRpc, settlementLayer), address)
-            : undefined,
-        source: settlementSource,
         thresholds: this.config.operator,
         bridgehub,
       });
@@ -124,27 +130,48 @@ class Run {
       return;
     }
     await this.ensure({
+      ...(await this.l1Balance(watchdog)),
       chain: chain.chain,
       label: 'watchdog L1',
       address: watchdog,
       chainId: this.l1ChainId,
-      balance: await readBalance(this.l1, watchdog),
-      source: 'L1 RPC',
       thresholds: this.config.watchdogL1,
       bridgehub,
     });
-
-    const l2Rpc = chain.l2RpcUrl;
     await this.ensure({
+      ...(await this.l2Balance(chain.l2RpcUrl, chainId, watchdog, 'L2')),
       chain: chain.chain,
       label: 'watchdog L2',
       address: watchdog,
       chainId,
-      balance: l2Rpc ? await readBalance(this.providers.get(l2Rpc, chainId), watchdog) : undefined,
-      source: l2Rpc ? `L2 RPC ${l2Rpc}` : 'no L2 RPC in Jarvis',
       thresholds: this.config.watchdogL2,
       bridgehub,
     });
+  }
+
+  private async l1Balance(address: string | undefined): Promise<BalanceRead> {
+    if (!address) return { source: 'L1 RPC' };
+    try {
+      return { balance: await this.l1.getBalance(address), source: 'L1 RPC' };
+    } catch (err) {
+      return { source: `L1 RPC: ${log.errorMessage(err)}` };
+    }
+  }
+
+  private async l2Balance(
+    url: string | undefined,
+    chainId: bigint,
+    address: string | undefined,
+    what: string,
+  ): Promise<BalanceRead> {
+    if (!address) return { source: `${what} RPC` };
+    if (!url) return { source: `no ${what} RPC for chain ${chainId} in Jarvis` };
+    try {
+      const provider = await this.providers.get(url, chainId);
+      return { balance: await provider.getBalance(address), source: `${what} RPC ${url}` };
+    } catch (err) {
+      return { source: `${what} RPC ${url}: ${log.errorMessage(err)}` };
+    }
   }
 
   /** Records the target in the report and tops it up when it is below its minimum. */
@@ -152,47 +179,48 @@ class Run {
     const { chain, label, address, chainId, balance, thresholds } = target;
     if (thresholds.min === 0n) return;
 
-    const prefix = `${chain}/${label}:`;
+    const name = `${chain}/${label}`;
     const row = (action: RowAction, details: string): void => {
       this.report.rows.push({ chain, label, address: address ?? '?', chainId, balance, min: thresholds.min, action, details });
     };
 
     if (!address) {
-      log.info(`${prefix} no address, skipped`);
+      log.info(`${name}: no address, skipped`);
       row('skipped', 'no address');
       return;
     }
 
-    const key = `${chainId}:${address.toLowerCase()}`;
-    const seenAs = this.seen.get(key);
-    if (seenAs) {
-      log.info(`${prefix} ${address} on chain ${chainId} already checked as ${seenAs}, skipped`);
-      row('skipped', `same as ${seenAs}`);
+    const coveredBy = this.seen.claim(chainId, address, thresholds.min, name);
+    if (coveredBy) {
+      log.info(`${name}: ${address} on chain ${chainId} already checked as ${coveredBy}, skipped`);
+      row('skipped', `same as ${coveredBy}`);
       return;
     }
-    this.seen.set(key, `${chain}/${label}`);
 
     if (balance === undefined) {
-      this.report.error(
-        `${chain}/${label}: could not read the balance of ${address} on chain ${chainId} (${target.source}); not topping up`,
-      );
+      this.report.error(`${name}: could not read the balance of ${address} on chain ${chainId} (${target.source}); not topping up`);
       row('error', 'balance unavailable');
       return;
     }
 
     if (balance >= thresholds.min) {
-      log.info(`${prefix} ${address} on chain ${chainId} has ${eth(balance)} ETH (${target.source}), min ${eth(thresholds.min)} ETH, ok`);
+      log.info(`${name}: ${address} on chain ${chainId} has ${eth(balance)} ETH (${target.source}), min ${eth(thresholds.min)} ETH, ok`);
       row('ok', '');
       return;
     }
 
     const amount = thresholds.target - balance;
     log.info(
-      `${prefix} ${address} on chain ${chainId} has ${eth(balance)} ETH (${target.source}), BELOW min ${eth(thresholds.min)} ETH; ` +
+      `${name}: ${address} on chain ${chainId} has ${eth(balance)} ETH (${target.source}), BELOW min ${eth(thresholds.min)} ETH; ` +
         `topping up by ${eth(amount)} ETH to reach ${eth(thresholds.target)} ETH`,
     );
-    if (this.funder.exhausted) {
-      log.info('  -> skipped, the funder is exhausted');
+    if (this.funder.haltReason) {
+      log.info(`  -> skipped: ${this.funder.haltReason}`);
+      row('error', 'skipped, funder halted');
+      return;
+    }
+    if (this.funder.unaffordable !== undefined && amount >= this.funder.unaffordable) {
+      log.info(`  -> skipped, the funder could not afford ${eth(this.funder.unaffordable)} ETH earlier in this run`);
       row('error', 'funder exhausted');
       return;
     }
@@ -202,12 +230,13 @@ class Run {
         chainId === this.l1ChainId
           ? await this.funder.transferL1(address, amount)
           : await this.funder.depositL2(target.bridgehub, chainId, address, amount);
-      this.report.actions.push(`${chain}/${label}: ${result.action}`);
+      this.report.actions.push(`${name}: ${result.action}`);
       row('topped up', result.details);
     } catch (err) {
-      if (!(err instanceof FundingError)) throw err;
-      this.report.error(err.message);
-      row('error', this.funder.exhausted ? 'funder exhausted' : err.message);
+      // Anything that went wrong for this target is reported; the run continues with the next one.
+      const message = err instanceof FundingError ? err.message : log.errorMessage(err);
+      this.report.error(`${name}: ${message}`);
+      row('error', message);
     }
   }
 }
@@ -224,7 +253,7 @@ async function run(config: Config, report: Report, l1: JsonRpcProvider, provider
   const startBalance = await funder.balance();
   log.info(`Funder:            ${funder.address} (${eth(startBalance)} ETH)`);
   log.info(`L1 RPC chain ID:   ${config.l1ChainId}`);
-  log.info(`Dry run:           ${config.dryRun}`);
+  log.info(`Dry run:           ${config.dryRun}${funder.sendsTransactions ? '' : ' (no transaction will be signed)'}`);
   log.info(`Operator:          min ${eth(config.operator.min)} ETH, target ${eth(config.operator.target)} ETH`);
   log.info(`Watchdog L1:       min ${eth(config.watchdogL1.min)} ETH, target ${eth(config.watchdogL1.target)} ETH`);
   log.info(`Watchdog L2:       min ${eth(config.watchdogL2.min)} ETH, target ${eth(config.watchdogL2.target)} ETH`);
@@ -271,7 +300,7 @@ async function run(config: Config, report: Report, l1: JsonRpcProvider, provider
 
 async function main(): Promise<number> {
   const env = process.env;
-  const report = new Report(['true', '1'].includes((env['DRY_RUN'] ?? '').trim().toLowerCase()));
+  const report = new Report(isDryRun(env));
 
   let l1: JsonRpcProvider | undefined;
   let providers: ProviderPool | undefined;
@@ -284,7 +313,7 @@ async function main(): Promise<number> {
     // Configuration, Jarvis or L1 RPC failures: the run cannot continue, but it still reports.
     report.error(log.errorMessage(err));
   } finally {
-    providers?.destroy();
+    await providers?.destroy();
     l1?.destroy();
   }
 

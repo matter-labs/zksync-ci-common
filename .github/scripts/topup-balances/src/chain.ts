@@ -2,7 +2,7 @@
  * L1 access: JSON-RPC providers, the Bridgehub interface, and the on-chain check that
  * decides whether a Jarvis chain lives on this L1.
  */
-import { Contract, FetchRequest, JsonRpcProvider, Network, ZeroAddress, isAddress } from 'ethers';
+import { Contract, FetchRequest, JsonRpcProvider, Network, ZeroAddress, isAddress, isError } from 'ethers';
 
 /** A callable contract method as ethers types it (`contract.getFunction(name)`). */
 type ContractMethod = ReturnType<Contract['getFunction']>;
@@ -52,33 +52,62 @@ export function createProvider(url: string, chainId: bigint, timeoutMs: number):
   return new JsonRpcProvider(request, Network.from(chainId), { staticNetwork: true, cacheTimeout: -1 });
 }
 
-/** One provider per RPC URL, all destroyed at the end of the run so the process can exit. */
+/**
+ * True for errors coming from the contract side of a call: no code at the address, unknown
+ * function, revert. Transport errors (timeouts, HTTP errors, rate limits) say nothing about
+ * the chain and must never be mistaken for "not deployed".
+ */
+export function isContractError(err: unknown): boolean {
+  return isError(err, 'BAD_DATA') || isError(err, 'CALL_EXCEPTION');
+}
+
+/** `.catch` handler that turns contract errors into `undefined` and lets transport errors propagate. */
+function undefinedIfContractError(err: unknown): undefined {
+  if (isContractError(err)) return undefined;
+  throw err;
+}
+
+/**
+ * One provider per RPC URL and chain ID, each checked once to really serve that chain
+ * (a copy-pasted RPC URL in the registry would otherwise return another chain's
+ * balances). All providers are destroyed at the end of the run so the process can exit.
+ */
 export class ProviderPool {
-  private readonly providers = new Map<string, JsonRpcProvider>();
+  private readonly providers = new Map<string, Promise<JsonRpcProvider>>();
 
   constructor(private readonly timeoutMs: number) {}
 
-  get(url: string, chainId: bigint): JsonRpcProvider {
-    let provider = this.providers.get(url);
+  /** Rejects when the RPC is unreachable or serves another chain. */
+  get(url: string, chainId: bigint): Promise<JsonRpcProvider> {
+    const key = `${chainId}:${url}`;
+    let provider = this.providers.get(key);
     if (!provider) {
-      provider = createProvider(url, chainId, this.timeoutMs);
-      this.providers.set(url, provider);
+      provider = this.connect(url, chainId);
+      this.providers.set(key, provider);
     }
     return provider;
   }
 
-  destroy(): void {
-    for (const provider of this.providers.values()) provider.destroy();
-    this.providers.clear();
+  private async connect(url: string, chainId: bigint): Promise<JsonRpcProvider> {
+    const provider = createProvider(url, chainId, this.timeoutMs);
+    try {
+      const actual = BigInt(await provider.send('eth_chainId', []));
+      if (actual !== chainId) throw new Error(`RPC ${url} serves chain ${actual}, expected ${chainId}`);
+      return provider;
+    } catch (err) {
+      provider.destroy();
+      throw err;
+    }
   }
-}
 
-/** Balance of `address`, or undefined when the RPC cannot be reached (e.g. auth-gated Prividium RPCs). */
-export async function readBalance(provider: JsonRpcProvider, address: string): Promise<bigint | undefined> {
-  try {
-    return await provider.getBalance(address);
-  } catch {
-    return undefined;
+  async destroy(): Promise<void> {
+    for (const provider of this.providers.values()) {
+      await provider.then(
+        (p) => p.destroy(),
+        () => undefined,
+      );
+    }
+    this.providers.clear();
   }
 }
 
@@ -92,6 +121,8 @@ export type L1Inspection =
  * diamond proxy. Chains of other L1s (mainnet) fail the first step because their addresses
  * hold no code on Sepolia. A chain that passes the first step but not the second is flagged
  * as suspicious, since the registry and the chain disagree.
+ *
+ * Transport errors are thrown, never interpreted: the caller reports them and moves on.
  */
 export async function inspectChainOnL1(
   l1: JsonRpcProvider,
@@ -100,7 +131,7 @@ export async function inspectChainOnL1(
   diamondProxy: string,
 ): Promise<L1Inspection> {
   const diamond = new Contract(diamondProxy, DIAMOND_PROXY_ABI, l1) as DiamondProxy;
-  const bridgehubAddress = await diamond.getBridgehub().catch(() => undefined);
+  const bridgehubAddress = await diamond.getBridgehub().catch(undefinedIfContractError);
   if (!bridgehubAddress || !isAddress(bridgehubAddress) || bridgehubAddress === ZeroAddress) {
     return {
       onL1: false,
@@ -111,8 +142,8 @@ export async function inspectChainOnL1(
 
   const bridgehub = bridgehubAt(bridgehubAddress, l1);
   const registered =
-    (await bridgehub.getZKChain(chainId).catch(() => undefined)) ??
-    (await bridgehub.getHyperchain(chainId).catch(() => undefined));
+    (await bridgehub.getZKChain(chainId).catch(undefinedIfContractError)) ??
+    (await bridgehub.getHyperchain(chainId).catch(undefinedIfContractError));
   if (!registered || registered.toLowerCase() !== diamondProxy.toLowerCase()) {
     return {
       onL1: false,
@@ -121,6 +152,10 @@ export async function inspectChainOnL1(
     };
   }
 
-  const settlementLayer = await bridgehub.settlementLayer(chainId).catch(() => l1ChainId);
+  // Pre-v26 Bridgehubs have no settlementLayer(): everything they know settles on L1.
+  const settlementLayer = await bridgehub.settlementLayer(chainId).catch((err: unknown) => {
+    if (isContractError(err)) return l1ChainId;
+    throw err;
+  });
   return { onL1: true, bridgehub, bridgehubAddress, settlementLayer };
 }
