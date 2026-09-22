@@ -16,7 +16,8 @@ name: Top up operator and watchdog balances
 #      expire), posts the problems and the transactions of the run to a dedicated
 #      Slack channel.
 #
-# The logic lives in .github/scripts/topup-balances.sh, which documents every knob.
+# The logic lives in .github/scripts/topup-balances (TypeScript); its README documents
+# every knob and how to run it locally.
 #
 # Required secrets:
 #   TOPUP_FUNDER_PRIVATE_KEY   Private key of the Sepolia funding wallet.
@@ -69,12 +70,22 @@ jobs:
     name: Check and top up balances
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: .github/scripts/topup-balances
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: .github/scripts/topup-balances/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Check and top up balances
         env:
@@ -94,9 +105,7 @@ jobs:
           FUNDER_MIN_ETH: ${{ vars.TOPUP_FUNDER_MIN_ETH || '5' }}
           L1_EXPLORER_URL: https://sepolia.etherscan.io
           SLACK_PAYLOAD_FILE: ${{ runner.temp }}/topup-slack-payload.json
-        # No `-x` here: the private key is passed to cast on the command line.
-        shell: bash -e {0}
-        run: bash .github/scripts/topup-balances.sh
+        run: npm start -s
 
       # The script writes a Block Kit payload with the actual problems and the
       # transactions it sent. If it never got that far (e.g. Foundry install failed),

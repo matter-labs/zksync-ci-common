@@ -1,0 +1,23 @@
+{
+  "name": "topup-balances",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Keeps operator and watchdog balances of Sepolia-based ZK chains above their thresholds",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "ethers": "^6.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "tsx": "^4.23.0",
+    "typescript": "^5.9.0"
+  }
+}
