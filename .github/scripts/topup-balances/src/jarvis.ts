@@ -31,6 +31,10 @@ export interface JarvisChain {
   /** `normal`, `unknown`, `unknown_inactive`, `archived` or `planned`. */
   state?: string;
   archived?: boolean;
+  readableName?: string;
+  displayName?: string;
+  /** `cluster/namespace` in Matter Labs' infrastructure, from metrics discovery or set manually. */
+  infraName?: string;
   l2RpcUrl?: string;
   watchdogAddress?: string;
   commitOperatorAddress?: string;
@@ -103,8 +107,11 @@ export function resolveOperator(
 export interface SkippedChain {
   chain: string;
   reason: string;
-  /** `error` when the chain is in scope but cannot be classified, so somebody has to look. */
-  level: 'info' | 'error';
+  /**
+   * `warning` for a chain that looks in scope but is not recognisably run by us;
+   * `error` for a chain in scope that cannot be classified, so somebody has to look.
+   */
+  level: 'info' | 'warning' | 'error';
 }
 
 export interface ChainSelection {
@@ -112,13 +119,28 @@ export interface ChainSelection {
   skipped: SkippedChain[];
 }
 
-export type ChainFilters = Pick<Config, 'onlyEcosystems' | 'skipChains' | 'chainTypes' | 'zksyncOsOnly'>;
+export type ChainFilters = Pick<
+  Config,
+  | 'onlyEcosystems'
+  | 'skipEcosystems'
+  | 'skipChains'
+  | 'skipNamePattern'
+  | 'includeChains'
+  | 'chainTypes'
+  | 'zksyncOsOnly'
+  | 'requireInfraName'
+>;
 
 /**
- * Chains in scope: deployed and labelled (`normal`), hosted the configured way (by default
- * only iRaaS, i.e. operated by Matter Labs), on the configured stack (by default only
- * ZKsync OS), minus the ecosystem and slug filters. Chains outside the scope are listed as
- * skipped so the log shows why they were not touched.
+ * Chains in scope, in this order of checks:
+ *   - deployed and labelled (`normal`), not archived;
+ *   - not in an excluded ecosystem and not matching the sandbox name pattern (slug, names
+ *     and infra name are all checked, so `sandbox_101`, `concord_sandbox` and anything in
+ *     the `zksync-os-sandboxes` cluster are caught);
+ *   - hosted the configured way (default: only iRaaS, operated by Matter Labs);
+ *   - known to Matter Labs' infrastructure (Jarvis `infraName`), unless disabled;
+ *   - on the configured stack (default: ZKsync OS), except chains listed in `includeChains`.
+ * Chains outside the scope are listed as skipped so the log shows why they were not touched.
  */
 export function selectChains(registry: JarvisRegistry, filters: ChainFilters): ChainSelection {
   const selection: ChainSelection = { selected: [], skipped: [] };
@@ -129,14 +151,31 @@ export function selectChains(registry: JarvisRegistry, filters: ChainFilters): C
   for (const chain of registry.chains) {
     if (chain.state !== 'normal' || chain.archived === true) continue;
     if (filters.onlyEcosystems.length > 0 && !filters.onlyEcosystems.includes(chain.ecosystem)) continue;
+    if (filters.skipEcosystems.includes(chain.ecosystem)) {
+      skip(chain, `ecosystem ${chain.ecosystem} is excluded`);
+      continue;
+    }
+    const sandboxMatch = filters.skipNamePattern && sandboxLikeName(chain, filters.skipNamePattern);
+    if (sandboxMatch) {
+      skip(chain, `"${sandboxMatch}" matches the excluded name pattern ${filters.skipNamePattern}`);
+      continue;
+    }
+    if (filters.skipChains.includes(chain.chain)) {
+      skip(chain, 'SKIP_CHAINS');
+      continue;
+    }
     if (!filters.chainTypes.includes(chain.type ?? 'Unknown')) {
       skip(chain, `hosting type ${chain.type ?? 'Unknown'}, not in ${filters.chainTypes.join(' ')}`);
       continue;
     }
-    if (filters.zksyncOsOnly) {
+    if (filters.requireInfraName && !chain.infraName) {
+      skip(chain, 'not known to Matter Labs infrastructure (no infraName in Jarvis); not touched', 'warning');
+      continue;
+    }
+    if (filters.zksyncOsOnly && !filters.includeChains.includes(chain.chain)) {
       const isZkSyncOs = registry.chainDataMap[chain.chain]?.isZkSyncOs;
       if (isZkSyncOs === false) {
-        skip(chain, 'EraVM chain, only ZKsync OS chains are in scope');
+        skip(chain, 'EraVM chain, only ZKsync OS chains and INCLUDE_CHAINS are in scope');
         continue;
       }
       if (isZkSyncOs !== true) {
@@ -144,13 +183,16 @@ export function selectChains(registry: JarvisRegistry, filters: ChainFilters): C
         continue;
       }
     }
-    if (filters.skipChains.includes(chain.chain)) {
-      skip(chain, 'SKIP_CHAINS');
-      continue;
-    }
     selection.selected.push(chain);
   }
   return selection;
+}
+
+/** The first of slug, names and infra name matching `pattern`, if any. */
+function sandboxLikeName(chain: JarvisChain, pattern: RegExp): string | undefined {
+  return [chain.chain, chain.readableName, chain.displayName, chain.infraName].find(
+    (name): name is string => name !== undefined && pattern.test(name),
+  );
 }
 
 /** L2 RPC URL of a chain in an ecosystem, used to read balances on a Gateway settlement layer. */

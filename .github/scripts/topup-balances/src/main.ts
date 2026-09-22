@@ -60,6 +60,7 @@ class Run {
     const selection = selectChains(this.registry, this.config);
     for (const skipped of selection.skipped) {
       if (skipped.level === 'error') this.report.error(`${skipped.chain}: ${skipped.reason}`);
+      else if (skipped.level === 'warning') log.warning(`${skipped.chain}: skipped, ${skipped.reason}`);
       else log.info(`${skipped.chain}: skipped (${skipped.reason})`);
     }
 
@@ -96,7 +97,6 @@ class Run {
       }
       return;
     }
-    this.chainsChecked += 1;
 
     const { bridgehub, bridgehubAddress, settlementLayer } = inspection;
     log.info();
@@ -104,6 +104,19 @@ class Run {
       `=== ${chain.chain} (${chain.ecosystem}, chain ${chainId}): diamond proxy ${diamondProxy}, ` +
         `bridgehub ${bridgehubAddress}, settlement layer ${settlementLayer}`,
     );
+
+    // Only live chains are funded: the sequencer must have produced a block recently. A chain
+    // whose liveness cannot be verified is not touched either.
+    if (this.config.maxL2BlockAgeMs > 0) {
+      const liveness = await this.l2Liveness(chain.l2RpcUrl, chainId);
+      if (!liveness.live) {
+        if (liveness.level === 'error') this.report.error(`${chain.chain}: ${liveness.reason}; not touched`);
+        else log.warning(`${chain.chain}: skipped, ${liveness.reason}`);
+        return;
+      }
+      log.info(`${chain.chain}: live, ${liveness.reason}`);
+    }
+    this.chainsChecked += 1;
 
     // Operators hold their balance on the settlement layer: L1, or a Gateway chain.
     // Balances are only ever read live; the Jarvis cache is never used, since a stale
@@ -150,6 +163,28 @@ class Run {
       thresholds: this.config.watchdogL2,
       bridgehub,
     });
+  }
+
+  /** Checks that the chain's latest L2 block is recent enough. */
+  private async l2Liveness(
+    url: string | undefined,
+    chainId: bigint,
+  ): Promise<{ live: true; reason: string } | { live: false; level: 'warning' | 'error'; reason: string }> {
+    if (!url) return { live: false, level: 'error', reason: 'no L2 RPC in Jarvis, cannot verify that the chain is live' };
+    try {
+      const provider = await this.providers.get(url, chainId);
+      const block = await provider.getBlock('latest');
+      if (!block) throw new Error('the RPC returned no latest block');
+      const ageMs = Date.now() - block.timestamp * 1000;
+      const ageText = `latest L2 block ${block.number} is ${Math.max(0, Math.round(ageMs / 60_000))} min old`;
+      if (ageMs > this.config.maxL2BlockAgeMs) {
+        const limitHours = this.config.maxL2BlockAgeMs / 3_600_000;
+        return { live: false, level: 'warning', reason: `${ageText} (limit ${limitHours}h), the chain is not live` };
+      }
+      return { live: true, reason: ageText };
+    } catch (err) {
+      return { live: false, level: 'error', reason: `cannot verify that the chain is live (L2 RPC ${url}: ${log.errorMessage(err)})` };
+    }
   }
 
   private async l1Balance(address: string | undefined): Promise<BalanceRead> {
@@ -264,7 +299,15 @@ async function run(config: Config, report: Report, l1: JsonRpcProvider, provider
     `Deposit params:    L2 gas limit ${config.l2GasLimit}, gas per pubdata ${config.l2GasPerPubdata}, ` +
       `gas price buffer +${config.gasPriceBufferPercent}%`,
   );
-  log.info(`Scope:             hosting type ${config.chainTypes.join(' ')}, ${config.zksyncOsOnly ? 'ZKsync OS chains only' : 'all stacks'}`);
+  log.info(
+    `Scope:             hosting type ${config.chainTypes.join(' ')}, ` +
+      `${config.zksyncOsOnly ? 'ZKsync OS chains only' : 'all stacks'}` +
+      `${config.includeChains.length > 0 ? ` plus ${config.includeChains.join(' ')}` : ''}, ` +
+      `${config.requireInfraName ? 'known to our infrastructure' : 'any infrastructure'}, ` +
+      `${config.maxL2BlockAgeMs > 0 ? `L2 block within ${config.maxL2BlockAgeMs / 3_600_000}h` : 'no liveness check'}`,
+  );
+  if (config.skipEcosystems.length > 0) log.info(`Skip ecosystems:   ${config.skipEcosystems.join(' ')}`);
+  if (config.skipNamePattern) log.info(`Skip names:        /${config.skipNamePattern.source}/i`);
   if (config.onlyEcosystems.length > 0) log.info(`Only ecosystems:   ${config.onlyEcosystems.join(' ')}`);
   if (config.skipChains.length > 0) log.info(`Skip chains:       ${config.skipChains.join(' ')}`);
 

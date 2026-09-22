@@ -36,10 +36,20 @@ export interface Config {
   chainTypes: string[];
   /** Only ZKsync OS chains are in scope (default: true). */
   zksyncOsOnly: boolean;
+  /** Chain slugs in scope regardless of their stack (default: the Era testnet). */
+  includeChains: string[];
+  /** Only chains Jarvis knows in Matter Labs' infrastructure (`infraName`) are in scope (default: true). */
+  requireInfraName: boolean;
   /** Jarvis ecosystem names to restrict to; empty means all. */
   onlyEcosystems: string[];
+  /** Jarvis ecosystems never touched (default: the Sepolia sandbox ecosystem). */
+  skipEcosystems: string[];
+  /** Chains whose slug, names or infra name match this are never touched (default: sandboxes). */
+  skipNamePattern?: RegExp;
   /** Jarvis chain slugs to skip. */
   skipChains: string[];
+  /** A chain whose latest L2 block is older than this is not live and not funded; 0 disables. */
+  maxL2BlockAgeMs: number;
   /** The run fails when the Jarvis token expires sooner than this. */
   jarvisTokenMinDays: number;
   rpcTimeoutMs: number;
@@ -65,10 +75,18 @@ const DEFAULTS: Record<string, string> = {
   GAS_PRICE_BUFFER_PERCENT: '50',
   CHAIN_TYPES: 'iRaaS',
   ZKSYNC_OS_ONLY: 'true',
+  INCLUDE_CHAINS: 'era_testnet_legacy',
+  REQUIRE_INFRA_NAME: 'true',
+  SKIP_ECOSYSTEMS: 'sandboxSepolia',
+  SKIP_NAME_PATTERN: 'sandbox',
+  MAX_L2_BLOCK_AGE_HOURS: '24',
   JARVIS_TOKEN_MIN_DAYS: '7',
   RPC_TIMEOUT: '30',
   TX_TIMEOUT: '300',
 };
+
+/** Value that empties a list or pattern setting that has a non-empty default. */
+const NONE = 'none';
 
 /** DRY_RUN=true (or 1): check balances and report, never sign a transaction. */
 export function isDryRun(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -79,7 +97,10 @@ export function isDryRun(env: NodeJS.ProcessEnv = process.env): boolean {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const get = (name: string): string => (env[name] ?? '').trim() || (DEFAULTS[name] ?? '');
   const optional = (name: string): string | undefined => get(name) || undefined;
-  const list = (name: string): string[] => get(name).split(/\s+/).filter(Boolean);
+  const list = (name: string): string[] => {
+    const raw = get(name);
+    return raw.toLowerCase() === NONE ? [] : raw.split(/\s+/).filter(Boolean);
+  };
   const flag = (name: string): boolean => ['true', '1'].includes(get(name).toLowerCase());
 
   const eth = (name: string): bigint => {
@@ -94,6 +115,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const raw = get(name);
     if (!/^\d+$/.test(raw)) throw new ConfigError(`${name} must be a non-negative integer, got "${raw}"`);
     return BigInt(raw);
+  };
+  const pattern = (name: string): RegExp | undefined => {
+    const raw = get(name);
+    if (!raw || raw.toLowerCase() === NONE) return undefined;
+    try {
+      return new RegExp(raw, 'i');
+    } catch {
+      throw new ConfigError(`${name} must be a valid regular expression, got "${raw}"`);
+    }
   };
   const thresholds = (minVar: string, targetVar: string): Thresholds => {
     const result = { min: eth(minVar), target: eth(targetVar) };
@@ -134,8 +164,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     gasPriceBufferPercent: integer('GAS_PRICE_BUFFER_PERCENT'),
     chainTypes: list('CHAIN_TYPES'),
     zksyncOsOnly: flag('ZKSYNC_OS_ONLY'),
+    includeChains: list('INCLUDE_CHAINS'),
+    requireInfraName: flag('REQUIRE_INFRA_NAME'),
     onlyEcosystems: list('ONLY_ECOSYSTEMS'),
+    skipEcosystems: list('SKIP_ECOSYSTEMS'),
+    skipNamePattern: pattern('SKIP_NAME_PATTERN'),
     skipChains: list('SKIP_CHAINS'),
+    maxL2BlockAgeMs: Number(integer('MAX_L2_BLOCK_AGE_HOURS')) * 3_600_000,
     jarvisTokenMinDays: Number(integer('JARVIS_TOKEN_MIN_DAYS')),
     rpcTimeoutMs: Number(integer('RPC_TIMEOUT')) * 1000,
     txTimeoutMs: Number(integer('TX_TIMEOUT')) * 1000,

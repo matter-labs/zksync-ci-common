@@ -7,18 +7,29 @@ Keeps the operators and watchdogs of the Sepolia-based ZKsync OS chains hosted b
 ## What a run does
 
 1. Loads the chain registry from Jarvis (`GET /api/chains/cache`).
-2. Keeps chains in state `normal` with hosting type `iRaaS` (operated by Matter Labs) that run
-   ZKsync OS (Jarvis derives `isZkSyncOs` from the chain's chain type manager on L1). Other
-   hosting types and EraVM chains are listed as skipped; an iRaaS chain whose stack Jarvis
-   could not determine is reported as an error and not touched. Both filters can be widened
-   with `CHAIN_TYPES` and `ZKSYNC_OS_ONLY`.
-3. Keeps chains whose L1 diamond proxy lives on Sepolia: `getBridgehub()`
+2. Keeps the chains in scope, checked in this order:
+   - state `normal`, not archived;
+   - not a sandbox: not in an excluded ecosystem (`sandboxSepolia`) and none of slug, names
+     or infra name matching the excluded pattern (`sandbox`), which catches `sandbox_101`,
+     `concord_sandbox` and everything in the `zksync-os-sandboxes` cluster;
+   - hosting type `iRaaS`, i.e. operated by Matter Labs;
+   - known to Matter Labs' infrastructure: Jarvis has an `infraName` (cluster/namespace) for
+     it, from metrics discovery or set manually; chains without one are skipped with a warning;
+   - ZKsync OS (Jarvis derives `isZkSyncOs` from the chain's chain type manager on L1), or
+     explicitly included via `INCLUDE_CHAINS` (default: the Era testnet `era_testnet_legacy`;
+     the ZKsync OS Era testnet `era_testnet` qualifies on its own). An iRaaS chain whose stack
+     Jarvis could not determine is reported as an error and not touched.
+   Every skipped chain is listed with the reason. All filters are configurable.
+3. Keeps chains whose L1 diamond proxy lives on Sepolia and that are live: `getBridgehub()`
    must answer on the diamond proxy, and that Bridgehub must map the chain ID back to it.
    Mainnet chains drop out here because their contracts hold no code on Sepolia. Only
    contract-side errors (no code, unknown function, revert) mean "not on Sepolia"; RPC
    transport errors are reported and the chain is retried next run. A Bridgehub that maps
    the chain ID to a different diamond proxy than Jarvis lists is reported as an error,
-   since the registry and the chain disagree.
+   since the registry and the chain disagree. A chain is live when its L2 RPC returns a
+   latest block younger than `MAX_L2_BLOCK_AGE_HOURS`; a chain that is not live is skipped
+   with a warning, and a chain whose liveness cannot be verified (no or unreachable L2 RPC)
+   is reported as an error and not touched.
 4. Collects the funding targets of every chain:
    - the commit, prove and execute operators on the settlement layer, resolved with the same
      precedence as the Jarvis dashboard (sender of the last tx, service-discovered, manually
@@ -81,6 +92,11 @@ Everything comes from environment variables. Amounts are in ETH and may have dec
 | `GAS_PRICE_BUFFER_PERCENT` | `50` | Buffer over the L1 gas price, used as max fee |
 | `CHAIN_TYPES` | `iRaaS` | Space-separated Jarvis hosting types in scope |
 | `ZKSYNC_OS_ONLY` | `true` | Only ZKsync OS chains; `false` includes EraVM chains |
+| `INCLUDE_CHAINS` | `era_testnet_legacy` | Space-separated slugs in scope regardless of stack |
+| `REQUIRE_INFRA_NAME` | `true` | Only chains with a Jarvis `infraName` (known to our infrastructure) |
+| `SKIP_ECOSYSTEMS` | `sandboxSepolia` | Space-separated Jarvis ecosystems never touched |
+| `SKIP_NAME_PATTERN` | `sandbox` | Case-insensitive regex; matching slug, names or infra name are never touched |
+| `MAX_L2_BLOCK_AGE_HOURS` | `24` | A chain whose latest L2 block is older is not live and not funded; `0` disables |
 | `ONLY_ECOSYSTEMS` | all | Space-separated Jarvis ecosystems to restrict to |
 | `SKIP_CHAINS` | none | Space-separated Jarvis chain slugs to skip |
 | `JARVIS_TOKEN_MIN_DAYS` | `7` | Fail when the Jarvis token expires sooner than this |
@@ -88,8 +104,10 @@ Everything comes from environment variables. Amounts are in ETH and may have dec
 | `TX_TIMEOUT` | `300` | Seconds to wait for a transaction receipt |
 | `SLACK_PAYLOAD_FILE` | | Where to write the Slack payload on failure |
 
-A minimum of `0` disables that check. Jarvis tokens are minted on the dashboard's API Access
-page and live 30 days, hence the expiry check.
+A minimum of `0` disables that check. List and pattern settings that have a default
+(`INCLUDE_CHAINS`, `SKIP_ECOSYSTEMS`, `SKIP_NAME_PATTERN`) are emptied by setting them to
+`none`. Jarvis tokens are minted on the dashboard's API Access page and live 30 days, hence
+the expiry check.
 
 ## Running locally
 

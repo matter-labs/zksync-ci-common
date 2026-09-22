@@ -19,6 +19,11 @@ describe('loadConfig', () => {
     assert.deepEqual(config.onlyEcosystems, []);
     assert.deepEqual(config.chainTypes, ['iRaaS']);
     assert.equal(config.zksyncOsOnly, true);
+    assert.deepEqual(config.includeChains, ['era_testnet_legacy']);
+    assert.equal(config.requireInfraName, true);
+    assert.deepEqual(config.skipEcosystems, ['sandboxSepolia']);
+    assert.equal(config.skipNamePattern?.test('Sandbox 101'), true);
+    assert.equal(config.maxL2BlockAgeMs, 24 * 3_600_000);
   });
 
   it('parses overrides and lists', () => {
@@ -45,8 +50,16 @@ describe('loadConfig', () => {
     assert.equal(config.funderPrivateKey, undefined);
   });
 
-  it('rejects malformed amounts', () => {
+  it('rejects malformed amounts and patterns', () => {
     assert.throws(() => loadConfig({ ...BASE, FUNDER_MIN_ETH: 'five' }), ConfigError);
     assert.throws(() => loadConfig({ ...BASE, L2_GAS_LIMIT: '1e7' }), ConfigError);
+    assert.throws(() => loadConfig({ ...BASE, SKIP_NAME_PATTERN: '(' }), ConfigError);
+  });
+
+  it('lets "none" empty a list or pattern that has a default', () => {
+    const config = loadConfig({ ...BASE, SKIP_NAME_PATTERN: 'none', SKIP_ECOSYSTEMS: 'None', INCLUDE_CHAINS: 'none' });
+    assert.equal(config.skipNamePattern, undefined);
+    assert.deepEqual(config.skipEcosystems, []);
+    assert.deepEqual(config.includeChains, []);
   });
 });

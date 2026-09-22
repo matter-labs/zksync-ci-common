@@ -5,8 +5,10 @@ name: Top up operator and watchdog balances
 #
 # Every run:
 #   1. Pulls the chain registry from Jarvis (https://api.jarvis.matterhosted.dev).
-#   2. Keeps chains with hosting type iRaaS that run ZKsync OS (both from Jarvis), whose L1
-#      contracts live on Sepolia (verified on-chain, so mainnet chains are ignored).
+#   2. Keeps chains with hosting type iRaaS that run ZKsync OS (plus the Era testnet), are
+#      known to our infrastructure and are not sandboxes (all from Jarvis), whose L1 contracts
+#      live on Sepolia (verified on-chain, so mainnet chains are ignored) and whose sequencer
+#      produced an L2 block recently.
 #   3. Reads the live balances of the commit/prove/execute operators, and of the
 #      watchdog on L1 and on L2.
 #   4. Tops up everything below its minimum up to its target balance from the funder
@@ -32,8 +34,9 @@ name: Top up operator and watchdog balances
 #   TOPUP_OPERATOR_MIN_ETH, TOPUP_OPERATOR_TARGET_ETH,
 #   TOPUP_WATCHDOG_L1_MIN_ETH, TOPUP_WATCHDOG_L1_TARGET_ETH,
 #   TOPUP_WATCHDOG_L2_MIN_ETH, TOPUP_WATCHDOG_L2_TARGET_ETH,
-#   TOPUP_FUNDER_MIN_ETH, TOPUP_CHAIN_TYPES, TOPUP_ZKSYNC_OS_ONLY, TOPUP_ONLY_ECOSYSTEMS,
-#   TOPUP_SKIP_CHAINS, JARVIS_API_URL
+#   TOPUP_FUNDER_MIN_ETH, TOPUP_CHAIN_TYPES, TOPUP_ZKSYNC_OS_ONLY, TOPUP_INCLUDE_CHAINS,
+#   TOPUP_REQUIRE_INFRA_NAME, TOPUP_SKIP_ECOSYSTEMS, TOPUP_SKIP_NAME_PATTERN,
+#   TOPUP_MAX_L2_BLOCK_AGE_HOURS, TOPUP_ONLY_ECOSYSTEMS, TOPUP_SKIP_CHAINS, JARVIS_API_URL
 
 on:
   schedule:
@@ -101,6 +104,11 @@ jobs:
           DRY_RUN: ${{ inputs.dry-run && 'true' || 'false' }}
           CHAIN_TYPES: ${{ vars.TOPUP_CHAIN_TYPES || 'iRaaS' }}
           ZKSYNC_OS_ONLY: ${{ vars.TOPUP_ZKSYNC_OS_ONLY || 'true' }}
+          INCLUDE_CHAINS: ${{ vars.TOPUP_INCLUDE_CHAINS || 'era_testnet_legacy' }}
+          REQUIRE_INFRA_NAME: ${{ vars.TOPUP_REQUIRE_INFRA_NAME || 'true' }}
+          SKIP_ECOSYSTEMS: ${{ vars.TOPUP_SKIP_ECOSYSTEMS || 'sandboxSepolia' }}
+          SKIP_NAME_PATTERN: ${{ vars.TOPUP_SKIP_NAME_PATTERN || 'sandbox' }}
+          MAX_L2_BLOCK_AGE_HOURS: ${{ vars.TOPUP_MAX_L2_BLOCK_AGE_HOURS || '24' }}
           ONLY_ECOSYSTEMS: ${{ inputs.only-ecosystems || vars.TOPUP_ONLY_ECOSYSTEMS || '' }}
           SKIP_CHAINS: ${{ inputs.skip-chains || vars.TOPUP_SKIP_CHAINS || '' }}
           OPERATOR_MIN_ETH: ${{ vars.TOPUP_OPERATOR_MIN_ETH || '5' }}
