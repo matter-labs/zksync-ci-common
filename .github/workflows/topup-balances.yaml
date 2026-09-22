@@ -1,14 +1,14 @@
 name: Top up operator and watchdog balances
 
-# Scheduled job that keeps the operators and watchdogs of the Sepolia-based ZKsync OS
-# chains hosted by Matter Labs (stage and testnet ecosystems) funded. Tracked in PLA-1425.
+# Scheduled job that keeps the operators and watchdogs of the Sepolia-based chains hosted
+# by Matter Labs (stage and testnet ecosystems, ZKsync OS and EraVM alike) funded.
+# Tracked in PLA-1425.
 #
 # Every run:
 #   1. Pulls the chain registry from Jarvis (https://api.jarvis.matterhosted.dev).
-#   2. Keeps chains with hosting type iRaaS that run ZKsync OS (plus the Era testnet), are
-#      known to our infrastructure and are not sandboxes (all from Jarvis), whose L1 contracts
-#      live on Sepolia (verified on-chain, so mainnet chains are ignored) and whose sequencer
-#      produced an L2 block recently.
+#   2. Keeps chains with hosting type iRaaS that are known to our infrastructure and are not
+#      sandboxes (all from Jarvis), whose L1 contracts live on Sepolia (verified on-chain, so
+#      mainnet chains are ignored) and whose sequencer produced an L2 block recently.
 #   3. Reads the live balances of the commit/prove/execute operators, and of the
 #      watchdog on L1 and on L2.
 #   4. Tops up everything below its minimum up to its target balance from the funder
@@ -103,8 +103,8 @@ jobs:
           FUNDER_PRIVATE_KEY: ${{ secrets.TOPUP_FUNDER_PRIVATE_KEY }}
           DRY_RUN: ${{ inputs.dry-run && 'true' || 'false' }}
           CHAIN_TYPES: ${{ vars.TOPUP_CHAIN_TYPES || 'iRaaS' }}
-          ZKSYNC_OS_ONLY: ${{ vars.TOPUP_ZKSYNC_OS_ONLY || 'true' }}
-          INCLUDE_CHAINS: ${{ vars.TOPUP_INCLUDE_CHAINS || 'era_testnet_legacy' }}
+          ZKSYNC_OS_ONLY: ${{ vars.TOPUP_ZKSYNC_OS_ONLY || 'false' }}
+          INCLUDE_CHAINS: ${{ vars.TOPUP_INCLUDE_CHAINS || '' }}
           REQUIRE_INFRA_NAME: ${{ vars.TOPUP_REQUIRE_INFRA_NAME || 'true' }}
           SKIP_ECOSYSTEMS: ${{ vars.TOPUP_SKIP_ECOSYSTEMS || 'sandboxSepolia' }}
           SKIP_NAME_PATTERN: ${{ vars.TOPUP_SKIP_NAME_PATTERN || 'sandbox' }}

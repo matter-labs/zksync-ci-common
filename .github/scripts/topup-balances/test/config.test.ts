@@ -18,8 +18,8 @@ describe('loadConfig', () => {
     assert.equal(config.dryRun, false);
     assert.deepEqual(config.onlyEcosystems, []);
     assert.deepEqual(config.chainTypes, ['iRaaS']);
-    assert.equal(config.zksyncOsOnly, true);
-    assert.deepEqual(config.includeChains, ['era_testnet_legacy']);
+    assert.equal(config.zksyncOsOnly, false);
+    assert.deepEqual(config.includeChains, []);
     assert.equal(config.requireInfraName, true);
     assert.deepEqual(config.skipEcosystems, ['sandboxSepolia']);
     assert.equal(config.skipNamePattern?.test('Sandbox 101'), true);
@@ -30,9 +30,10 @@ describe('loadConfig', () => {
     const config = loadConfig({ ...BASE, OPERATOR_MIN_ETH: '0.25', OPERATOR_TARGET_ETH: '1', ONLY_ECOSYSTEMS: ' stage  testnet2 ' });
     assert.deepEqual(config.operator, { min: parseEther('0.25'), target: parseEther('1') });
     assert.deepEqual(config.onlyEcosystems, ['stage', 'testnet2']);
-    const widened = loadConfig({ ...BASE, CHAIN_TYPES: 'iRaaS eRaaS', ZKSYNC_OS_ONLY: 'false' });
+    const widened = loadConfig({ ...BASE, CHAIN_TYPES: 'iRaaS eRaaS', ZKSYNC_OS_ONLY: 'true', INCLUDE_CHAINS: 'era_testnet_legacy' });
     assert.deepEqual(widened.chainTypes, ['iRaaS', 'eRaaS']);
-    assert.equal(widened.zksyncOsOnly, false);
+    assert.equal(widened.zksyncOsOnly, true);
+    assert.deepEqual(widened.includeChains, ['era_testnet_legacy']);
   });
 
   it('rejects a target below the minimum', () => {

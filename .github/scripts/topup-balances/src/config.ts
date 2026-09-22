@@ -34,9 +34,9 @@ export interface Config {
   gasPriceBufferPercent: bigint;
   /** Jarvis hosting types in scope (default: only iRaaS, chains operated by Matter Labs). */
   chainTypes: string[];
-  /** Only ZKsync OS chains are in scope (default: true). */
+  /** Narrow the scope to ZKsync OS chains (default: false, EraVM chains are in scope too). */
   zksyncOsOnly: boolean;
-  /** Chain slugs in scope regardless of their stack (default: the Era testnet). */
+  /** Chain slugs in scope regardless of their stack when `zksyncOsOnly` is set (default: none). */
   includeChains: string[];
   /** Only chains Jarvis knows in Matter Labs' infrastructure (`infraName`) are in scope (default: true). */
   requireInfraName: boolean;
@@ -74,8 +74,8 @@ const DEFAULTS: Record<string, string> = {
   L2_GAS_PER_PUBDATA: '800',
   GAS_PRICE_BUFFER_PERCENT: '50',
   CHAIN_TYPES: 'iRaaS',
-  ZKSYNC_OS_ONLY: 'true',
-  INCLUDE_CHAINS: 'era_testnet_legacy',
+  ZKSYNC_OS_ONLY: 'false',
+  INCLUDE_CHAINS: '',
   REQUIRE_INFRA_NAME: 'true',
   SKIP_ECOSYSTEMS: 'sandboxSepolia',
   SKIP_NAME_PATTERN: 'sandbox',

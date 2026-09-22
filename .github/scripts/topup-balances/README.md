@@ -1,8 +1,9 @@
 # topup-balances
 
-Keeps the operators and watchdogs of the Sepolia-based ZKsync OS chains hosted by Matter Labs
-(stage and testnet ecosystems) funded. Runs from `.github/workflows/topup-balances.yaml` every
-6 hours and on demand. Tracked in [PLA-1425](https://linear.app/matterlabs/issue/PLA-1425).
+Keeps the operators and watchdogs of the Sepolia-based chains hosted by Matter Labs (stage
+and testnet ecosystems, ZKsync OS and EraVM alike) funded. Runs from
+`.github/workflows/topup-balances.yaml` every 6 hours and on demand. Tracked in
+[PLA-1425](https://linear.app/matterlabs/issue/PLA-1425).
 
 ## What a run does
 
@@ -15,10 +16,10 @@ Keeps the operators and watchdogs of the Sepolia-based ZKsync OS chains hosted b
    - hosting type `iRaaS`, i.e. operated by Matter Labs;
    - known to Matter Labs' infrastructure: Jarvis has an `infraName` (cluster/namespace) for
      it, from metrics discovery or set manually; chains without one are skipped with a warning;
-   - ZKsync OS (Jarvis derives `isZkSyncOs` from the chain's chain type manager on L1), or
-     explicitly included via `INCLUDE_CHAINS` (default: the Era testnet `era_testnet_legacy`;
-     the ZKsync OS Era testnet `era_testnet` qualifies on its own). An iRaaS chain whose stack
-     Jarvis could not determine is reported as an error and not touched.
+   - any stack by default. `ZKSYNC_OS_ONLY=true` narrows the scope to ZKsync OS chains (Jarvis
+     derives `isZkSyncOs` from the chain's chain type manager on L1) plus the slugs listed in
+     `INCLUDE_CHAINS`; in that mode a chain whose stack Jarvis could not determine is reported
+     as an error and not touched.
    Every skipped chain is listed with the reason. All filters are configurable.
 3. Keeps chains whose L1 diamond proxy lives on Sepolia and that are live: `getBridgehub()`
    must answer on the diamond proxy, and that Bridgehub must map the chain ID back to it.
@@ -91,8 +92,8 @@ Everything comes from environment variables. Amounts are in ETH and may have dec
 | `L2_GAS_PER_PUBDATA` | `800` | L2 gas per pubdata byte of deposits |
 | `GAS_PRICE_BUFFER_PERCENT` | `50` | Buffer over the L1 gas price, used as max fee |
 | `CHAIN_TYPES` | `iRaaS` | Space-separated Jarvis hosting types in scope |
-| `ZKSYNC_OS_ONLY` | `true` | Only ZKsync OS chains; `false` includes EraVM chains |
-| `INCLUDE_CHAINS` | `era_testnet_legacy` | Space-separated slugs in scope regardless of stack |
+| `ZKSYNC_OS_ONLY` | `false` | `true` narrows the scope to ZKsync OS chains |
+| `INCLUDE_CHAINS` | none | Space-separated slugs in scope regardless of stack when narrowed |
 | `REQUIRE_INFRA_NAME` | `true` | Only chains with a Jarvis `infraName` (known to our infrastructure) |
 | `SKIP_ECOSYSTEMS` | `sandboxSepolia` | Space-separated Jarvis ecosystems never touched |
 | `SKIP_NAME_PATTERN` | `sandbox` | Case-insensitive regex; matching slug, names or infra name are never touched |

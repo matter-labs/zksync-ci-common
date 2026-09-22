@@ -106,21 +106,29 @@ describe('selectChains', () => {
       nowhere: { isZkSyncOs: true },
     },
   };
+  // Production defaults: every stack, hosted by us, known to our infrastructure, no sandboxes.
   const defaults = {
     onlyEcosystems: [],
     skipEcosystems: ['sandboxSepolia'],
     skipChains: [],
     skipNamePattern: /sandbox/i,
-    includeChains: ['era_testnet_legacy'],
+    includeChains: [],
     chainTypes: ['iRaaS'],
-    zksyncOsOnly: true,
+    zksyncOsOnly: false,
     requireInfraName: true,
   };
+  const osOnly = { ...defaults, zksyncOsOnly: true, includeChains: ['era_testnet_legacy'] };
   const reason = (skipped: { chain: string; reason: string }[], chain: string): string =>
     skipped.find((s) => s.chain === chain)?.reason ?? '';
 
-  it('keeps normal, Matter Labs hosted ZKsync OS chains plus the included Era testnet', () => {
-    const { selected } = selectChains(registry, defaults);
+  it('keeps normal, Matter Labs hosted chains of both stacks by default', () => {
+    const { selected, skipped } = selectChains(registry, defaults);
+    assert.deepEqual(selected.map((c) => c.chain), ['a', 'b', 'eravm', 'era_testnet_legacy', 'unclassified']);
+    assert.deepEqual(skipped.filter((s) => s.level === 'error'), []);
+  });
+
+  it('can be narrowed to ZKsync OS chains plus explicitly included ones', () => {
+    const { selected } = selectChains(registry, osOnly);
     assert.deepEqual(selected.map((c) => c.chain), ['a', 'b', 'era_testnet_legacy']);
   });
 
@@ -131,27 +139,22 @@ describe('selectChains', () => {
     assert.match(reason(skipped, 'playground'), /"Sandbox 7" matches/);
   });
 
-  it('skips other hosting types and EraVM chains with a reason', () => {
-    const { skipped } = selectChains(registry, defaults);
+  it('skips other hosting types, and EraVM chains when narrowed, with a reason', () => {
+    const { skipped } = selectChains(registry, osOnly);
     assert.match(reason(skipped, 'eravm'), /EraVM/);
     assert.match(reason(skipped, 'partner'), /hosting type eRaaS/);
     assert.match(reason(skipped, 'self'), /hosting type SelfHosted/);
     assert.match(reason(skipped, 'untyped'), /hosting type Unknown/);
   });
 
-  it('warns about chains not known to our infrastructure and errors on unclassified ones', () => {
-    const { skipped } = selectChains(registry, defaults);
+  it('warns about chains not known to our infrastructure and, when narrowed, errors on unclassified ones', () => {
+    const { skipped } = selectChains(registry, osOnly);
     assert.deepEqual(skipped.filter((s) => s.level === 'warning').map((s) => s.chain), ['nowhere']);
     assert.deepEqual(skipped.filter((s) => s.level === 'error').map((s) => s.chain), ['unclassified']);
   });
 
-  it('can be widened to other hosting types, stacks and infrastructures', () => {
-    const { selected } = selectChains(registry, {
-      ...defaults,
-      chainTypes: ['iRaaS', 'eRaaS'],
-      zksyncOsOnly: false,
-      requireInfraName: false,
-    });
+  it('can be widened to other hosting types and infrastructures', () => {
+    const { selected } = selectChains(registry, { ...defaults, chainTypes: ['iRaaS', 'eRaaS'], requireInfraName: false });
     assert.deepEqual(selected.map((c) => c.chain), ['a', 'b', 'eravm', 'era_testnet_legacy', 'partner', 'unclassified', 'nowhere']);
   });
 
