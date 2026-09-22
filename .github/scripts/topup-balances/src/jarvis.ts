@@ -26,6 +26,8 @@ export interface JarvisChain {
   chain: string;
   ecosystem: string;
   chainId: number;
+  /** Hosting model: `iRaaS` (operated by Matter Labs), `eRaaS`, `SelfHosted` or `Unknown`. */
+  type?: string;
   /** `normal`, `unknown`, `unknown_inactive`, `archived` or `planned`. */
   state?: string;
   archived?: boolean;
@@ -42,6 +44,11 @@ export interface JarvisChain {
 export interface JarvisChainData {
   /** L1 diamond proxy of the chain. */
   diamondProxy?: string;
+  /**
+   * True for ZKsync OS chains, false for EraVM chains. Derived by Jarvis from the chain's
+   * chain type manager on L1; undefined when Jarvis could not read the chain.
+   */
+  isZkSyncOs?: boolean;
   validatorRoles?: ValidatorRoles;
 }
 
@@ -93,22 +100,52 @@ export function resolveOperator(
   return candidate && isAddress(candidate) ? candidate : undefined;
 }
 
-export interface ChainSelection {
-  selected: JarvisChain[];
-  skipped: { chain: string; reason: string }[];
+export interface SkippedChain {
+  chain: string;
+  reason: string;
+  /** `error` when the chain is in scope but cannot be classified, so somebody has to look. */
+  level: 'info' | 'error';
 }
 
-/** Chains worth checking: deployed and labelled (`normal`), minus the configured filters. */
-export function selectChains(
-  registry: JarvisRegistry,
-  filters: Pick<Config, 'onlyEcosystems' | 'skipChains'>,
-): ChainSelection {
+export interface ChainSelection {
+  selected: JarvisChain[];
+  skipped: SkippedChain[];
+}
+
+export type ChainFilters = Pick<Config, 'onlyEcosystems' | 'skipChains' | 'chainTypes' | 'zksyncOsOnly'>;
+
+/**
+ * Chains in scope: deployed and labelled (`normal`), hosted the configured way (by default
+ * only iRaaS, i.e. operated by Matter Labs), on the configured stack (by default only
+ * ZKsync OS), minus the ecosystem and slug filters. Chains outside the scope are listed as
+ * skipped so the log shows why they were not touched.
+ */
+export function selectChains(registry: JarvisRegistry, filters: ChainFilters): ChainSelection {
   const selection: ChainSelection = { selected: [], skipped: [] };
+  const skip = (chain: JarvisChain, reason: string, level: SkippedChain['level'] = 'info'): void => {
+    selection.skipped.push({ chain: chain.chain, reason, level });
+  };
+
   for (const chain of registry.chains) {
     if (chain.state !== 'normal' || chain.archived === true) continue;
     if (filters.onlyEcosystems.length > 0 && !filters.onlyEcosystems.includes(chain.ecosystem)) continue;
+    if (!filters.chainTypes.includes(chain.type ?? 'Unknown')) {
+      skip(chain, `hosting type ${chain.type ?? 'Unknown'}, not in ${filters.chainTypes.join(' ')}`);
+      continue;
+    }
+    if (filters.zksyncOsOnly) {
+      const isZkSyncOs = registry.chainDataMap[chain.chain]?.isZkSyncOs;
+      if (isZkSyncOs === false) {
+        skip(chain, 'EraVM chain, only ZKsync OS chains are in scope');
+        continue;
+      }
+      if (isZkSyncOs !== true) {
+        skip(chain, 'Jarvis does not know whether the chain runs ZKsync OS; not touched', 'error');
+        continue;
+      }
+    }
     if (filters.skipChains.includes(chain.chain)) {
-      selection.skipped.push({ chain: chain.chain, reason: 'SKIP_CHAINS' });
+      skip(chain, 'SKIP_CHAINS');
       continue;
     }
     selection.selected.push(chain);

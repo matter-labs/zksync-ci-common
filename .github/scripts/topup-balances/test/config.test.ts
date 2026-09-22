@@ -17,12 +17,17 @@ describe('loadConfig', () => {
     assert.equal(config.rpcTimeoutMs, 30_000);
     assert.equal(config.dryRun, false);
     assert.deepEqual(config.onlyEcosystems, []);
+    assert.deepEqual(config.chainTypes, ['iRaaS']);
+    assert.equal(config.zksyncOsOnly, true);
   });
 
   it('parses overrides and lists', () => {
     const config = loadConfig({ ...BASE, OPERATOR_MIN_ETH: '0.25', OPERATOR_TARGET_ETH: '1', ONLY_ECOSYSTEMS: ' stage  testnet2 ' });
     assert.deepEqual(config.operator, { min: parseEther('0.25'), target: parseEther('1') });
     assert.deepEqual(config.onlyEcosystems, ['stage', 'testnet2']);
+    const widened = loadConfig({ ...BASE, CHAIN_TYPES: 'iRaaS eRaaS', ZKSYNC_OS_ONLY: 'false' });
+    assert.deepEqual(widened.chainTypes, ['iRaaS', 'eRaaS']);
+    assert.equal(widened.zksyncOsOnly, false);
   });
 
   it('rejects a target below the minimum', () => {

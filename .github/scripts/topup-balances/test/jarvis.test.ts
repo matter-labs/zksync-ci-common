@@ -75,25 +75,54 @@ describe('resolveOperator', () => {
 describe('selectChains', () => {
   const registry: JarvisRegistry = {
     chains: [
-      { chain: 'a', ecosystem: 'stage', chainId: 1, state: 'normal' },
-      { chain: 'b', ecosystem: 'testnet2', chainId: 2, state: 'normal' },
-      { chain: 'c', ecosystem: 'stage', chainId: 3, state: 'archived', archived: true },
-      { chain: 'd', ecosystem: 'stage', chainId: 4, state: 'planned' },
-      { chain: 'e', ecosystem: 'stage', chainId: 5, state: 'unknown_inactive' },
+      { chain: 'a', ecosystem: 'stage', chainId: 1, state: 'normal', type: 'iRaaS' },
+      { chain: 'b', ecosystem: 'testnet2', chainId: 2, state: 'normal', type: 'iRaaS' },
+      { chain: 'c', ecosystem: 'stage', chainId: 3, state: 'archived', archived: true, type: 'iRaaS' },
+      { chain: 'd', ecosystem: 'stage', chainId: 4, state: 'planned', type: 'iRaaS' },
+      { chain: 'e', ecosystem: 'stage', chainId: 5, state: 'unknown_inactive', type: 'iRaaS' },
+      { chain: 'eravm', ecosystem: 'stage', chainId: 6, state: 'normal', type: 'iRaaS' },
+      { chain: 'partner', ecosystem: 'stage', chainId: 7, state: 'normal', type: 'eRaaS' },
+      { chain: 'self', ecosystem: 'stage', chainId: 8, state: 'normal', type: 'SelfHosted' },
+      { chain: 'untyped', ecosystem: 'stage', chainId: 9, state: 'normal' },
+      { chain: 'unclassified', ecosystem: 'stage', chainId: 10, state: 'normal', type: 'iRaaS' },
     ],
-    chainDataMap: {},
+    chainDataMap: {
+      a: { isZkSyncOs: true },
+      b: { isZkSyncOs: true },
+      eravm: { isZkSyncOs: false },
+      partner: { isZkSyncOs: true },
+      self: { isZkSyncOs: true },
+      untyped: { isZkSyncOs: true },
+    },
   };
+  const defaults = { onlyEcosystems: [], skipChains: [], chainTypes: ['iRaaS'], zksyncOsOnly: true };
 
-  it('keeps only chains in state normal', () => {
-    const { selected, skipped } = selectChains(registry, { onlyEcosystems: [], skipChains: [] });
+  it('keeps only normal, Matter Labs hosted, ZKsync OS chains by default', () => {
+    const { selected, skipped } = selectChains(registry, defaults);
     assert.deepEqual(selected.map((c) => c.chain), ['a', 'b']);
-    assert.deepEqual(skipped, []);
+    assert.deepEqual(skipped.filter((s) => s.level === 'info').map((s) => s.chain), ['eravm', 'partner', 'self', 'untyped']);
+    assert.match(skipped.find((s) => s.chain === 'eravm')?.reason ?? '', /EraVM/);
+    assert.match(skipped.find((s) => s.chain === 'partner')?.reason ?? '', /hosting type eRaaS/);
+    assert.match(skipped.find((s) => s.chain === 'untyped')?.reason ?? '', /hosting type Unknown/);
+  });
+
+  it('reports an in-scope chain whose stack Jarvis could not determine as an error', () => {
+    const { skipped } = selectChains(registry, defaults);
+    assert.deepEqual(
+      skipped.filter((s) => s.level === 'error').map((s) => s.chain),
+      ['unclassified'],
+    );
+  });
+
+  it('can be widened to other hosting types and stacks', () => {
+    const { selected } = selectChains(registry, { ...defaults, chainTypes: ['iRaaS', 'eRaaS'], zksyncOsOnly: false });
+    assert.deepEqual(selected.map((c) => c.chain), ['a', 'b', 'eravm', 'partner', 'unclassified']);
   });
 
   it('applies the ecosystem and chain filters', () => {
-    const { selected, skipped } = selectChains(registry, { onlyEcosystems: ['stage'], skipChains: ['a'] });
+    const { selected, skipped } = selectChains(registry, { ...defaults, onlyEcosystems: ['testnet2'], skipChains: ['b'] });
     assert.deepEqual(selected, []);
-    assert.deepEqual(skipped, [{ chain: 'a', reason: 'SKIP_CHAINS' }]);
+    assert.deepEqual(skipped, [{ chain: 'b', reason: 'SKIP_CHAINS', level: 'info' }]);
   });
 
   it('finds the L2 RPC of a chain by ecosystem and chain ID', () => {

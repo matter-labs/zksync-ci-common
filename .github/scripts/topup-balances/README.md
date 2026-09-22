@@ -1,32 +1,37 @@
 # topup-balances
 
-Keeps the operators and watchdogs of Sepolia-based ZK chains (stage and testnet ecosystems)
-funded. Runs from `.github/workflows/topup-balances.yaml` every 6 hours and on demand.
-Tracked in [PLA-1425](https://linear.app/matterlabs/issue/PLA-1425).
+Keeps the operators and watchdogs of the Sepolia-based ZKsync OS chains hosted by Matter Labs
+(stage and testnet ecosystems) funded. Runs from `.github/workflows/topup-balances.yaml` every
+6 hours and on demand. Tracked in [PLA-1425](https://linear.app/matterlabs/issue/PLA-1425).
 
 ## What a run does
 
 1. Loads the chain registry from Jarvis (`GET /api/chains/cache`).
-2. Keeps chains in state `normal` whose L1 diamond proxy lives on Sepolia: `getBridgehub()`
+2. Keeps chains in state `normal` with hosting type `iRaaS` (operated by Matter Labs) that run
+   ZKsync OS (Jarvis derives `isZkSyncOs` from the chain's chain type manager on L1). Other
+   hosting types and EraVM chains are listed as skipped; an iRaaS chain whose stack Jarvis
+   could not determine is reported as an error and not touched. Both filters can be widened
+   with `CHAIN_TYPES` and `ZKSYNC_OS_ONLY`.
+3. Keeps chains whose L1 diamond proxy lives on Sepolia: `getBridgehub()`
    must answer on the diamond proxy, and that Bridgehub must map the chain ID back to it.
    Mainnet chains drop out here because their contracts hold no code on Sepolia. Only
    contract-side errors (no code, unknown function, revert) mean "not on Sepolia"; RPC
    transport errors are reported and the chain is retried next run. A Bridgehub that maps
    the chain ID to a different diamond proxy than Jarvis lists is reported as an error,
    since the registry and the chain disagree.
-3. Collects the funding targets of every chain:
+4. Collects the funding targets of every chain:
    - the commit, prove and execute operators on the settlement layer, resolved with the same
      precedence as the Jarvis dashboard (sender of the last tx, service-discovered, manually
      configured, first validator);
    - the watchdog on L1 (it pays for its deposit flows there);
    - the watchdog on L2.
-4. Reads the balances live: from the L1 RPC for L1 targets, from the chain's L2 RPC for L2
+5. Reads the balances live: from the L1 RPC for L1 targets, from the chain's L2 RPC for L2
    targets. The Jarvis cache is never used as a balance source: a balance that cannot be
    read is reported as an error and not topped up, so a broken RPC or registry entry can
    never make the job fund a wallet repeatedly. Chains with an auth-gated L2 RPC
    (Prividium) therefore fail the watchdog L2 check until Jarvis lists a reachable RPC for
    them; use `SKIP_CHAINS` in the meantime.
-5. Tops up every target below its minimum up to its target balance from the funder wallet:
+6. Tops up every target below its minimum up to its target balance from the funder wallet:
    - L1 targets get a plain ETH transfer;
    - L2 targets get a `Bridgehub.requestL2TransactionDirect` deposit. The L2 gas cost is
      taken from `l2TransactionBaseCost` at a buffered gas price that is also pinned as the
@@ -39,7 +44,7 @@ Tracked in [PLA-1425](https://linear.app/matterlabs/issue/PLA-1425).
    the run: queueing behind a stuck transaction could fund the same target twice. A top-up
    the funder cannot afford is reported, and larger top-ups are skipped for the rest of the
    run while smaller ones are still attempted.
-6. Writes a markdown report to the job summary and, when anything needs attention, a Slack
+7. Writes a markdown report to the job summary and, when anything needs attention, a Slack
    payload that the workflow posts to the dedicated channel. The run fails on: a reverted
    or failed transaction, a target below threshold that cannot be funded (for example a
    custom base token), a balance that could not be read, the funder ending below its
@@ -74,6 +79,8 @@ Everything comes from environment variables. Amounts are in ETH and may have dec
 | `L2_GAS_LIMIT` | `10000000` | L2 gas limit of deposits |
 | `L2_GAS_PER_PUBDATA` | `800` | L2 gas per pubdata byte of deposits |
 | `GAS_PRICE_BUFFER_PERCENT` | `50` | Buffer over the L1 gas price, used as max fee |
+| `CHAIN_TYPES` | `iRaaS` | Space-separated Jarvis hosting types in scope |
+| `ZKSYNC_OS_ONLY` | `true` | Only ZKsync OS chains; `false` includes EraVM chains |
 | `ONLY_ECOSYSTEMS` | all | Space-separated Jarvis ecosystems to restrict to |
 | `SKIP_CHAINS` | none | Space-separated Jarvis chain slugs to skip |
 | `JARVIS_TOKEN_MIN_DAYS` | `7` | Fail when the Jarvis token expires sooner than this |

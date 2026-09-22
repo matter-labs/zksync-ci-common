@@ -32,6 +32,10 @@ export interface Config {
   l2GasPerPubdata: bigint;
   /** Buffer over the current L1 gas price, used as the max fee of every tx. */
   gasPriceBufferPercent: bigint;
+  /** Jarvis hosting types in scope (default: only iRaaS, chains operated by Matter Labs). */
+  chainTypes: string[];
+  /** Only ZKsync OS chains are in scope (default: true). */
+  zksyncOsOnly: boolean;
   /** Jarvis ecosystem names to restrict to; empty means all. */
   onlyEcosystems: string[];
   /** Jarvis chain slugs to skip. */
@@ -59,6 +63,8 @@ const DEFAULTS: Record<string, string> = {
   L2_GAS_LIMIT: '10000000',
   L2_GAS_PER_PUBDATA: '800',
   GAS_PRICE_BUFFER_PERCENT: '50',
+  CHAIN_TYPES: 'iRaaS',
+  ZKSYNC_OS_ONLY: 'true',
   JARVIS_TOKEN_MIN_DAYS: '7',
   RPC_TIMEOUT: '30',
   TX_TIMEOUT: '300',
@@ -74,6 +80,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const get = (name: string): string => (env[name] ?? '').trim() || (DEFAULTS[name] ?? '');
   const optional = (name: string): string | undefined => get(name) || undefined;
   const list = (name: string): string[] => get(name).split(/\s+/).filter(Boolean);
+  const flag = (name: string): boolean => ['true', '1'].includes(get(name).toLowerCase());
 
   const eth = (name: string): bigint => {
     const raw = get(name);
@@ -125,6 +132,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     l2GasLimit: integer('L2_GAS_LIMIT'),
     l2GasPerPubdata: integer('L2_GAS_PER_PUBDATA'),
     gasPriceBufferPercent: integer('GAS_PRICE_BUFFER_PERCENT'),
+    chainTypes: list('CHAIN_TYPES'),
+    zksyncOsOnly: flag('ZKSYNC_OS_ONLY'),
     onlyEcosystems: list('ONLY_ECOSYSTEMS'),
     skipChains: list('SKIP_CHAINS'),
     jarvisTokenMinDays: Number(integer('JARVIS_TOKEN_MIN_DAYS')),

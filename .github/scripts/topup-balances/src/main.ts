@@ -58,7 +58,10 @@ class Run {
 
   async execute(): Promise<void> {
     const selection = selectChains(this.registry, this.config);
-    for (const skipped of selection.skipped) log.info(`${skipped.chain}: skipped (${skipped.reason})`);
+    for (const skipped of selection.skipped) {
+      if (skipped.level === 'error') this.report.error(`${skipped.chain}: ${skipped.reason}`);
+      else log.info(`${skipped.chain}: skipped (${skipped.reason})`);
+    }
 
     for (const chain of selection.selected) {
       try {
@@ -261,6 +264,7 @@ async function run(config: Config, report: Report, l1: JsonRpcProvider, provider
     `Deposit params:    L2 gas limit ${config.l2GasLimit}, gas per pubdata ${config.l2GasPerPubdata}, ` +
       `gas price buffer +${config.gasPriceBufferPercent}%`,
   );
+  log.info(`Scope:             hosting type ${config.chainTypes.join(' ')}, ${config.zksyncOsOnly ? 'ZKsync OS chains only' : 'all stacks'}`);
   if (config.onlyEcosystems.length > 0) log.info(`Only ecosystems:   ${config.onlyEcosystems.join(' ')}`);
   if (config.skipChains.length > 0) log.info(`Skip chains:       ${config.skipChains.join(' ')}`);
 
