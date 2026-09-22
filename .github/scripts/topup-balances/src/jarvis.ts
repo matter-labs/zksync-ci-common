@@ -42,14 +42,6 @@ export interface JarvisChain {
 export interface JarvisChainData {
   /** L1 diamond proxy of the chain. */
   diamondProxy?: string;
-  /** Live L2 balance of the watchdog (wei). */
-  watchdogBalance?: string;
-  /** Metric-sourced L2 balance of the watchdog (wei). */
-  watchdogL2Balance?: string;
-  /** Settlement-layer balances of the operators (wei). */
-  commitOperatorBalance?: string;
-  proveOperatorBalance?: string;
-  executeOperatorBalance?: string;
   validatorRoles?: ValidatorRoles;
 }
 
@@ -70,33 +62,10 @@ type AddressField = keyof Pick<
   | 'serviceProveOperatorAddress'
   | 'serviceExecuteOperatorAddress'
 >;
-type BalanceField = keyof Pick<
-  JarvisChainData,
-  'commitOperatorBalance' | 'proveOperatorBalance' | 'executeOperatorBalance'
->;
-
-const ROLE_FIELDS: Record<
-  OperatorRole,
-  { validators: keyof ValidatorRoles; service: AddressField; manual: AddressField; balance: BalanceField }
-> = {
-  commit: {
-    validators: 'committers',
-    service: 'serviceCommitOperatorAddress',
-    manual: 'commitOperatorAddress',
-    balance: 'commitOperatorBalance',
-  },
-  prove: {
-    validators: 'provers',
-    service: 'serviceProveOperatorAddress',
-    manual: 'proveOperatorAddress',
-    balance: 'proveOperatorBalance',
-  },
-  execute: {
-    validators: 'executors',
-    service: 'serviceExecuteOperatorAddress',
-    manual: 'executeOperatorAddress',
-    balance: 'executeOperatorBalance',
-  },
+const ROLE_FIELDS: Record<OperatorRole, { validators: keyof ValidatorRoles; service: AddressField; manual: AddressField }> = {
+  commit: { validators: 'committers', service: 'serviceCommitOperatorAddress', manual: 'commitOperatorAddress' },
+  prove: { validators: 'provers', service: 'serviceProveOperatorAddress', manual: 'proveOperatorAddress' },
+  execute: { validators: 'executors', service: 'serviceExecuteOperatorAddress', manual: 'executeOperatorAddress' },
 };
 
 /**
@@ -122,20 +91,6 @@ export function resolveOperator(
     validators[0]?.address;
 
   return candidate && isAddress(candidate) ? candidate : undefined;
-}
-
-/** Cached settlement-layer balance of an operator, if Jarvis has one. */
-export function cachedOperatorBalance(role: OperatorRole, data: JarvisChainData | undefined): bigint | undefined {
-  return parseWei(data?.[ROLE_FIELDS[role].balance]);
-}
-
-/** Cached L2 balance of the watchdog, if Jarvis has one. */
-export function cachedWatchdogL2Balance(data: JarvisChainData | undefined): bigint | undefined {
-  return parseWei(data?.watchdogBalance) ?? parseWei(data?.watchdogL2Balance);
-}
-
-function parseWei(value: string | undefined): bigint | undefined {
-  return value !== undefined && /^\d+$/.test(value) ? BigInt(value) : undefined;
 }
 
 export interface ChainSelection {

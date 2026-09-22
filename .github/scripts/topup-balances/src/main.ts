@@ -10,8 +10,6 @@ import { eth } from './format.ts';
 import { Funder, FundingError } from './funding.ts';
 import {
   OPERATOR_ROLES,
-  cachedOperatorBalance,
-  cachedWatchdogL2Balance,
   l2RpcUrlOf,
   loadRegistry,
   resolveOperator,
@@ -30,6 +28,7 @@ interface Target {
   address: string | undefined;
   /** Chain the balance lives on: the settlement layer for operators, L1 or the chain itself for the watchdog. */
   chainId: bigint;
+  /** Live balance; undefined when it could not be read, which is an error and never a top-up. */
   balance: bigint | undefined;
   /** Where the balance was read from, for the log. */
   source: string;
@@ -89,28 +88,30 @@ class Run {
     );
 
     // Operators hold their balance on the settlement layer: L1, or a Gateway chain.
+    // Balances are only ever read live; the Jarvis cache is never used, since a stale
+    // cache could make the job fund the same wallet over and over.
     const settlesOnL1 = settlementLayer === this.l1ChainId;
     const settlementRpc = settlesOnL1
       ? this.config.l1RpcUrl
       : l2RpcUrlOf(this.registry, chain.ecosystem, settlementLayer);
+    let settlementSource = 'L1 RPC';
+    if (!settlesOnL1) {
+      settlementSource = settlementRpc
+        ? `settlement layer RPC ${settlementRpc}`
+        : `no RPC in Jarvis for settlement layer ${settlementLayer}`;
+    }
     for (const role of OPERATOR_ROLES) {
       const address = resolveOperator(role, chain, data);
-      let balance: bigint | undefined;
-      let source = settlesOnL1 ? 'live L1 RPC' : 'live settlement layer RPC';
-      if (address && settlementRpc) {
-        balance = await readBalance(this.providers.get(settlementRpc, settlementLayer), address);
-      }
-      if (address && balance === undefined) {
-        balance = cachedOperatorBalance(role, data);
-        source = 'Jarvis cache';
-      }
       await this.ensure({
         chain: chain.chain,
         label: `${role} operator`,
         address,
         chainId: settlementLayer,
-        balance,
-        source,
+        balance:
+          address && settlementRpc
+            ? await readBalance(this.providers.get(settlementRpc, settlementLayer), address)
+            : undefined,
+        source: settlementSource,
         thresholds: this.config.operator,
         bridgehub,
       });
@@ -128,29 +129,19 @@ class Run {
       address: watchdog,
       chainId: this.l1ChainId,
       balance: await readBalance(this.l1, watchdog),
-      source: 'live L1 RPC',
+      source: 'L1 RPC',
       thresholds: this.config.watchdogL1,
       bridgehub,
     });
 
-    let l2Balance = chain.l2RpcUrl
-      ? await readBalance(this.providers.get(chain.l2RpcUrl, chainId), watchdog)
-      : undefined;
-    let l2Source = 'live L2 RPC';
-    if (l2Balance === undefined) {
-      log.info(
-        `${chain.chain}: L2 RPC ${chain.l2RpcUrl ?? '<none>'} unavailable, falling back to the Jarvis cached watchdog balance`,
-      );
-      l2Balance = cachedWatchdogL2Balance(data);
-      l2Source = 'Jarvis cache';
-    }
+    const l2Rpc = chain.l2RpcUrl;
     await this.ensure({
       chain: chain.chain,
       label: 'watchdog L2',
       address: watchdog,
       chainId,
-      balance: l2Balance,
-      source: l2Source,
+      balance: l2Rpc ? await readBalance(this.providers.get(l2Rpc, chainId), watchdog) : undefined,
+      source: l2Rpc ? `L2 RPC ${l2Rpc}` : 'no L2 RPC in Jarvis',
       thresholds: this.config.watchdogL2,
       bridgehub,
     });
@@ -182,7 +173,9 @@ class Run {
     this.seen.set(key, `${chain}/${label}`);
 
     if (balance === undefined) {
-      this.report.error(`${chain}/${label}: could not determine the balance of ${address} on chain ${chainId}`);
+      this.report.error(
+        `${chain}/${label}: could not read the balance of ${address} on chain ${chainId} (${target.source}); not topping up`,
+      );
       row('error', 'balance unavailable');
       return;
     }

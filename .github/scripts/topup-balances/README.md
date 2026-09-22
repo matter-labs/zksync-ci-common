@@ -16,8 +16,12 @@ Tracked in [PLA-1425](https://linear.app/matterlabs/issue/PLA-1425).
      configured, first validator);
    - the watchdog on L1 (it pays for its deposit flows there);
    - the watchdog on L2.
-4. Reads live balances: L1 RPC for L1 targets, the chain's L2 RPC for L2 targets, falling
-   back to the Jarvis cache when an L2 RPC is unreachable (auth-gated Prividium RPCs).
+4. Reads the balances live: from the L1 RPC for L1 targets, from the chain's L2 RPC for L2
+   targets. The Jarvis cache is never used as a balance source: a balance that cannot be
+   read is reported as an error and not topped up, so a broken RPC or registry entry can
+   never make the job fund a wallet repeatedly. Chains with an auth-gated L2 RPC
+   (Prividium) therefore fail the watchdog L2 check until Jarvis lists a reachable RPC for
+   them; use `SKIP_CHAINS` in the meantime.
 5. Tops up every target below its minimum up to its target balance from the funder wallet:
    - L1 targets get a plain ETH transfer;
    - L2 targets get a `Bridgehub.requestL2TransactionDirect` deposit. The L2 gas cost is
@@ -86,7 +90,7 @@ npm run typecheck
 npm test
 ```
 
-The PR workflow `check-topup-balances.yaml` runs both. Source layout:
+Source layout:
 
 - `src/main.ts`: the run (chain selection, targets, thresholds, exit code)
 - `src/jarvis.ts`: registry types, loading, operator resolution

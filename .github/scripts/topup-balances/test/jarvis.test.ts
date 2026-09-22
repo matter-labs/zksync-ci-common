@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  cachedWatchdogL2Balance,
   l2RpcUrlOf,
   resolveOperator,
   selectChains,
@@ -104,15 +103,6 @@ describe('selectChains', () => {
     };
     assert.equal(l2RpcUrlOf(withRpc, 'stage', 123n), 'https://gw.example');
     assert.equal(l2RpcUrlOf(withRpc, 'testnet', 123n), undefined);
-  });
-});
-
-describe('cached balances', () => {
-  it('prefers the live cached watchdog balance over the metric one and ignores garbage', () => {
-    assert.equal(cachedWatchdogL2Balance({ watchdogBalance: '10', watchdogL2Balance: '20' }), 10n);
-    assert.equal(cachedWatchdogL2Balance({ watchdogL2Balance: '20' }), 20n);
-    assert.equal(cachedWatchdogL2Balance({ watchdogBalance: 'n/a' }), undefined);
-    assert.equal(cachedWatchdogL2Balance(undefined), undefined);
   });
 });
 
