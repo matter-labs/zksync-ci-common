@@ -30,19 +30,19 @@ and testnet ecosystems, ZKsync OS and EraVM alike) funded. Runs from
    since the registry and the chain disagree. A chain is live when its L2 RPC returns a
    latest block younger than `MAX_L2_BLOCK_AGE_HOURS`; a chain that is not live is skipped
    with a warning, and a chain whose liveness cannot be verified (no or unreachable L2 RPC)
-   is reported as an error and not touched.
+   is reported as an error and not touched. Prividium chains (Jarvis `prividium: true`) are
+   the exception: their L2 RPC is auth-gated, so a `normal` state in Jarvis is taken as live.
 4. Collects the funding targets of every chain:
    - the commit, prove and execute operators on the settlement layer, resolved with the same
      precedence as the Jarvis dashboard (sender of the last tx, service-discovered, manually
      configured, first validator);
    - the watchdog on L1 (it pays for its deposit flows there);
-   - the watchdog on L2.
+   - the watchdog on L2, except on Prividium chains, where the L2 balance cannot be read and
+     the target is listed as skipped.
 5. Reads the balances live: from the L1 RPC for L1 targets, from the chain's L2 RPC for L2
    targets. The Jarvis cache is never used as a balance source: a balance that cannot be
    read is reported as an error and not topped up, so a broken RPC or registry entry can
-   never make the job fund a wallet repeatedly. Chains with an auth-gated L2 RPC
-   (Prividium) therefore fail the watchdog L2 check until Jarvis lists a reachable RPC for
-   them; use `SKIP_CHAINS` in the meantime.
+   never make the job fund a wallet repeatedly.
 6. Tops up every target below its minimum up to its target balance from the funder wallet:
    - L1 targets get a plain ETH transfer;
    - L2 targets get a `Bridgehub.requestL2TransactionDirect` deposit. The L2 gas cost is

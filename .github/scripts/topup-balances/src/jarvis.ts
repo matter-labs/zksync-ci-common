@@ -35,6 +35,8 @@ export interface JarvisChain {
   displayName?: string;
   /** `cluster/namespace` in Matter Labs' infrastructure, from metrics discovery or set manually. */
   infraName?: string;
+  /** Prividium chain: its L2 RPC is auth-gated, so nothing on L2 can be read without credentials. */
+  prividium?: boolean;
   l2RpcUrl?: string;
   watchdogAddress?: string;
   commitOperatorAddress?: string;

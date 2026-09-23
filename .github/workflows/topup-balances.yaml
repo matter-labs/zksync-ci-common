@@ -10,7 +10,7 @@ name: Top up operator and watchdog balances
 #      sandboxes (all from Jarvis), whose L1 contracts live on Sepolia (verified on-chain, so
 #      mainnet chains are ignored) and whose sequencer produced an L2 block recently.
 #   3. Reads the live balances of the commit/prove/execute operators, and of the
-#      watchdog on L1 and on L2.
+#      watchdog on L1 and on L2 (L1 only for Prividium chains, whose L2 RPC is auth-gated).
 #   4. Tops up everything below its minimum up to its target balance from the funder
 #      wallet: plain ETH transfers on L1, Bridgehub deposits for L2 balances.
 #   5. Writes a report to the job summary and, when anything failed (reverted tx, a

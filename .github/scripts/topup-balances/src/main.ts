@@ -106,8 +106,13 @@ class Run {
     );
 
     // Only live chains are funded: the sequencer must have produced a block recently. A chain
-    // whose liveness cannot be verified is not touched either.
-    if (this.config.maxL2BlockAgeMs > 0) {
+    // whose liveness cannot be verified is not touched either. Prividium chains are the
+    // exception: their L2 RPC is auth-gated, so Jarvis listing them as normal is taken as
+    // live, and only their L1 side (operators, watchdog L1) is handled.
+    const prividium = chain.prividium === true;
+    if (prividium) {
+      log.info(`${chain.chain}: Prividium chain, L2 RPC is auth-gated: liveness taken from Jarvis, watchdog L2 not checked`);
+    } else if (this.config.maxL2BlockAgeMs > 0) {
       const liveness = await this.l2Liveness(chain.l2RpcUrl, chainId);
       if (!liveness.live) {
         if (liveness.level === 'error') this.report.error(`${chain.chain}: ${liveness.reason}; not touched`);
@@ -154,6 +159,19 @@ class Run {
       thresholds: this.config.watchdogL1,
       bridgehub,
     });
+    if (prividium) {
+      log.info(`${chain.chain}/watchdog L2: skipped, Prividium L2 balance is not readable`);
+      this.report.rows.push({
+        chain: chain.chain,
+        label: 'watchdog L2',
+        address: watchdog,
+        chainId,
+        min: this.config.watchdogL2.min,
+        action: 'skipped',
+        details: 'Prividium chain, L2 balance not readable',
+      });
+      return;
+    }
     await this.ensure({
       ...(await this.l2Balance(chain.l2RpcUrl, chainId, watchdog, 'L2')),
       chain: chain.chain,
