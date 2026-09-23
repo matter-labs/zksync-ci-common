@@ -1,0 +1,163 @@
+name: Top up operator and watchdog balances
+
+# Scheduled job that keeps the operators and watchdogs of the Sepolia-based chains hosted
+# by Matter Labs (stage and testnet ecosystems, ZKsync OS and EraVM alike) funded.
+# Tracked in PLA-1425.
+#
+# Every run:
+#   1. Pulls the chain registry from Jarvis (https://api.jarvis.matterhosted.dev).
+#   2. Keeps chains with hosting type iRaaS that are known to our infrastructure and are not
+#      sandboxes (all from Jarvis), whose L1 contracts live on Sepolia (verified on-chain, so
+#      mainnet chains are ignored) and whose sequencer produced an L2 block recently.
+#   3. Reads the live balances of the commit/prove/execute operators, and of the
+#      watchdog on L1 and on L2 (L1 only for Prividium chains, whose L2 RPC is auth-gated).
+#   4. Tops up everything below its minimum up to its target balance from the funder
+#      wallet: plain ETH transfers on L1, Bridgehub deposits for L2 balances.
+#   5. Writes a report to the job summary and, when anything failed (reverted tx, a
+#      target that cannot be funded, funder running low, Jarvis token about to
+#      expire), posts the problems and the transactions of the run to a dedicated
+#      Slack channel.
+#
+# The logic lives in .github/scripts/topup-balances (TypeScript); its README documents
+# every knob and how to run it locally.
+#
+# Required secrets:
+#   TOPUP_FUNDER_PRIVATE_KEY   Private key of the Sepolia funding wallet.
+#   TOPUP_SEPOLIA_RPC_URL      Sepolia JSON-RPC URL (contains a provider API key).
+#   JARVIS_API_TOKEN           Jarvis chains API bearer token (chains:read scope). Tokens
+#                              minted on the Jarvis dashboard's API Access page live 30
+#                              days; the job fails 7 days before expiry as a reminder.
+#   TOPUP_SLACK_WEBHOOK_URL    Incoming webhook of a Slack channel dedicated to this job.
+#                              Do not reuse the release-notification webhook.
+#
+# Optional repository variables (defaults are in the script):
+#   TOPUP_OPERATOR_MIN_ETH, TOPUP_OPERATOR_TARGET_ETH,
+#   TOPUP_WATCHDOG_L1_MIN_ETH, TOPUP_WATCHDOG_L1_TARGET_ETH,
+#   TOPUP_WATCHDOG_L2_MIN_ETH, TOPUP_WATCHDOG_L2_TARGET_ETH,
+#   TOPUP_FUNDER_ADDRESS (lets dry runs work before the funder key secret exists),
+#   TOPUP_FUNDER_MIN_ETH, TOPUP_CHAIN_TYPES, TOPUP_ZKSYNC_OS_ONLY, TOPUP_INCLUDE_CHAINS,
+#   TOPUP_REQUIRE_INFRA_NAME, TOPUP_SKIP_ECOSYSTEMS, TOPUP_SKIP_NAME_PATTERN,
+#   TOPUP_MAX_L2_BLOCK_AGE_HOURS, TOPUP_ONLY_ECOSYSTEMS, TOPUP_SKIP_CHAINS, JARVIS_API_URL
+
+on:
+  schedule:
+    # Every 6 hours, off the full hour to avoid the GitHub scheduler rush.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        type: boolean
+        description: 'Only report what would be sent, do not send transactions'
+        required: false
+        default: false
+      only-ecosystems:
+        type: string
+        description: 'Space-separated Jarvis ecosystems to restrict to (empty = all Sepolia-based)'
+        required: false
+        default: ''
+      skip-chains:
+        type: string
+        description: 'Space-separated Jarvis chain slugs to skip'
+        required: false
+        default: ''
+
+# Never run two instances at once: they would share the funder nonce and could
+# double-fund the same address.
+concurrency:
+  group: topup-balances
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  topup:
+    name: Check and top up balances
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: .github/scripts/topup-balances
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: .github/scripts/topup-balances/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The job moves funds: never run code that does not type-check or fails its tests.
+      - name: Typecheck and test
+        run: npm run typecheck && npm test
+
+      - name: Check and top up balances
+        env:
+          JARVIS_API_URL: ${{ vars.JARVIS_API_URL || 'https://api.jarvis.matterhosted.dev' }}
+          JARVIS_API_TOKEN: ${{ secrets.JARVIS_API_TOKEN }}
+          L1_RPC_URL: ${{ secrets.TOPUP_SEPOLIA_RPC_URL }}
+          FUNDER_PRIVATE_KEY: ${{ secrets.TOPUP_FUNDER_PRIVATE_KEY }}
+          FUNDER_ADDRESS: ${{ vars.TOPUP_FUNDER_ADDRESS || '' }}
+          # Manual runs follow the input; scheduled runs are real.
+          DRY_RUN: ${{ inputs.dry-run && 'true' || 'false' }}
+          CHAIN_TYPES: ${{ vars.TOPUP_CHAIN_TYPES || 'iRaaS' }}
+          ZKSYNC_OS_ONLY: ${{ vars.TOPUP_ZKSYNC_OS_ONLY || 'false' }}
+          INCLUDE_CHAINS: ${{ vars.TOPUP_INCLUDE_CHAINS || '' }}
+          REQUIRE_INFRA_NAME: ${{ vars.TOPUP_REQUIRE_INFRA_NAME || 'true' }}
+          SKIP_ECOSYSTEMS: ${{ vars.TOPUP_SKIP_ECOSYSTEMS || 'sandboxSepolia' }}
+          SKIP_NAME_PATTERN: ${{ vars.TOPUP_SKIP_NAME_PATTERN || 'sandbox' }}
+          MAX_L2_BLOCK_AGE_HOURS: ${{ vars.TOPUP_MAX_L2_BLOCK_AGE_HOURS || '24' }}
+          ONLY_ECOSYSTEMS: ${{ inputs.only-ecosystems || vars.TOPUP_ONLY_ECOSYSTEMS || '' }}
+          SKIP_CHAINS: ${{ inputs.skip-chains || vars.TOPUP_SKIP_CHAINS || '' }}
+          OPERATOR_MIN_ETH: ${{ vars.TOPUP_OPERATOR_MIN_ETH || '5' }}
+          OPERATOR_TARGET_ETH: ${{ vars.TOPUP_OPERATOR_TARGET_ETH || '10' }}
+          WATCHDOG_L1_MIN_ETH: ${{ vars.TOPUP_WATCHDOG_L1_MIN_ETH || '0.2' }}
+          WATCHDOG_L1_TARGET_ETH: ${{ vars.TOPUP_WATCHDOG_L1_TARGET_ETH || '0.5' }}
+          WATCHDOG_L2_MIN_ETH: ${{ vars.TOPUP_WATCHDOG_L2_MIN_ETH || '0.5' }}
+          WATCHDOG_L2_TARGET_ETH: ${{ vars.TOPUP_WATCHDOG_L2_TARGET_ETH || '1.5' }}
+          FUNDER_MIN_ETH: ${{ vars.TOPUP_FUNDER_MIN_ETH || '20' }}
+          L1_EXPLORER_URL: https://sepolia.etherscan.io
+          SLACK_PAYLOAD_FILE: ${{ runner.temp }}/topup-slack-payload.json
+        run: npm start -s
+
+      # The job writes a Block Kit payload with the actual problems and the transactions
+      # it sent. If it never got that far (setup failed, tests failed, or the job hit its
+      # timeout and was cancelled), fall back to a generic message so the channel is
+      # still notified.
+      - name: Prepare Slack payload
+        if: ${{ failure() || cancelled() }}
+        env:
+          PAYLOAD_FILE: ${{ runner.temp }}/topup-slack-payload.json
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ -f "${PAYLOAD_FILE}" ]]; then
+            echo "Using the payload written by the script"
+            exit 0
+          fi
+          jq -n --arg repo "${GITHUB_REPOSITORY}" --arg workflow "${GITHUB_WORKFLOW}" --arg run_url "${RUN_URL}" '{
+            text: "🚨 Sepolia balance top-up workflow did not complete",
+            blocks: [
+              { type: "header", text: { type: "plain_text", text: "🚨 Sepolia balance top-up workflow did not complete", emoji: true } },
+              { type: "section", fields: [
+                  { type: "mrkdwn", text: ("*Repository:*\n`" + $repo + "`") },
+                  { type: "mrkdwn", text: ("*Workflow:*\n`" + $workflow + "`") }
+              ] },
+              { type: "section", text: { type: "mrkdwn", text: "The job failed or was cancelled (job timeout) before the balance checks completed. Balances may be unchecked. See the logs." } },
+              { type: "actions", elements: [
+                  { type: "button", text: { type: "plain_text", text: "View workflow logs", emoji: true }, url: $run_url, style: "danger" }
+              ] }
+            ]
+          }' > "${PAYLOAD_FILE}"
+
+      - name: Slack notification
+        if: ${{ failure() || cancelled() }}
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          webhook: ${{ secrets.TOPUP_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload-file-path: ${{ runner.temp }}/topup-slack-payload.json
