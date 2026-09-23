@@ -40,9 +40,6 @@ name: Top up operator and watchdog balances
 #   TOPUP_MAX_L2_BLOCK_AGE_HOURS, TOPUP_ONLY_ECOSYSTEMS, TOPUP_SKIP_CHAINS, JARVIS_API_URL
 
 on:
-  # TEMPORARY, remove before merging: runs the job as a dry run on the PR to prove that it
-  # completes end to end with the repository secrets. Dry-run mode is forced below.
-  pull_request:
   schedule:
     # Every 6 hours, off the full hour to avoid the GitHub scheduler rush.
     - cron: '17 */6 * * *'
@@ -106,8 +103,8 @@ jobs:
           L1_RPC_URL: ${{ secrets.TOPUP_SEPOLIA_RPC_URL }}
           FUNDER_PRIVATE_KEY: ${{ secrets.TOPUP_FUNDER_PRIVATE_KEY }}
           FUNDER_ADDRESS: ${{ vars.TOPUP_FUNDER_ADDRESS || '' }}
-          # Pull request runs are always dry runs; manual runs follow the input; scheduled runs are real.
-          DRY_RUN: ${{ github.event_name == 'pull_request' && 'true' || inputs.dry-run && 'true' || 'false' }}
+          # Manual runs follow the input; scheduled runs are real.
+          DRY_RUN: ${{ inputs.dry-run && 'true' || 'false' }}
           CHAIN_TYPES: ${{ vars.TOPUP_CHAIN_TYPES || 'iRaaS' }}
           ZKSYNC_OS_ONLY: ${{ vars.TOPUP_ZKSYNC_OS_ONLY || 'false' }}
           INCLUDE_CHAINS: ${{ vars.TOPUP_INCLUDE_CHAINS || '' }}
