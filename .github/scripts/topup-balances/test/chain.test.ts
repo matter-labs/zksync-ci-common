@@ -13,6 +13,7 @@ describe('isContractError', () => {
   });
 
   it('does not mistake transport errors for missing contracts', () => {
+    assert.equal(isContractError(makeError('missing response for request', 'BAD_DATA', { value: [] })), false);
     assert.equal(isContractError(makeError('timeout', 'TIMEOUT', { operation: 'call', reason: 'timeout', request: {} as never })), false);
     assert.equal(isContractError(makeError('network', 'NETWORK_ERROR', { event: 'noNetwork' })), false);
     assert.equal(isContractError(makeError('server', 'SERVER_ERROR', { request: {} as never })), false);

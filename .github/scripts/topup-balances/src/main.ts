@@ -20,6 +20,7 @@ import {
 } from './jarvis.ts';
 import * as log from './log.ts';
 import { Report, githubContext, type RowAction } from './report.ts';
+import { withRetries } from './retry.ts';
 import { SeenTargets } from './targets.ts';
 
 /** A balance read attempt: `balance` is undefined when it could not be read, and `source` then says why. */
@@ -191,7 +192,7 @@ class Run {
     if (!url) return { live: false, level: 'error', reason: 'no L2 RPC in Jarvis, cannot verify that the chain is live' };
     try {
       const provider = await this.providers.get(url, chainId);
-      const block = await provider.getBlock('latest');
+      const block = await withRetries('latest block', () => provider.getBlock('latest'));
       if (!block) throw new Error('the RPC returned no latest block');
       const ageMs = Date.now() - block.timestamp * 1000;
       const ageText = `latest L2 block ${block.number} is ${Math.max(0, Math.round(ageMs / 60_000))} min old`;
@@ -208,7 +209,7 @@ class Run {
   private async l1Balance(address: string | undefined): Promise<BalanceRead> {
     if (!address) return { source: 'L1 RPC' };
     try {
-      return { balance: await this.l1.getBalance(address), source: 'L1 RPC' };
+      return { balance: await withRetries('L1 balance', () => this.l1.getBalance(address)), source: 'L1 RPC' };
     } catch (err) {
       return { source: `L1 RPC: ${log.errorMessage(err)}` };
     }
@@ -224,7 +225,7 @@ class Run {
     if (!url) return { source: `no ${what} RPC for chain ${chainId} in Jarvis` };
     try {
       const provider = await this.providers.get(url, chainId);
-      return { balance: await provider.getBalance(address), source: `${what} RPC ${url}` };
+      return { balance: await withRetries(`${what} balance`, () => provider.getBalance(address)), source: `${what} RPC ${url}` };
     } catch (err) {
       return { source: `${what} RPC ${url}: ${log.errorMessage(err)}` };
     }

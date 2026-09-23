@@ -4,6 +4,8 @@
  */
 import { Contract, FetchRequest, JsonRpcProvider, Network, ZeroAddress, isAddress, isError } from 'ethers';
 
+import { withRetries } from './retry.ts';
+
 /** A callable contract method as ethers types it (`contract.getFunction(name)`). */
 type ContractMethod = ReturnType<Contract['getFunction']>;
 
@@ -42,14 +44,19 @@ export function bridgehubAt(address: string, provider: JsonRpcProvider): Bridgeh
 }
 
 /**
- * Provider with a request timeout, without network auto-detection and without ethers'
- * short-lived response cache: the run sends transactions back to back and must always
- * see the current nonce and balance.
+ * Provider with a request timeout, without network auto-detection, without ethers'
+ * short-lived response cache (the run sends transactions back to back and must always see
+ * the current nonce and balance) and without request batching (RPC providers differ in how
+ * they answer batches, which shows up as "missing response for request").
  */
 export function createProvider(url: string, chainId: bigint, timeoutMs: number): JsonRpcProvider {
   const request = new FetchRequest(url);
   request.timeout = timeoutMs;
-  return new JsonRpcProvider(request, Network.from(chainId), { staticNetwork: true, cacheTimeout: -1 });
+  return new JsonRpcProvider(request, Network.from(chainId), {
+    staticNetwork: true,
+    cacheTimeout: -1,
+    batchMaxCount: 1,
+  });
 }
 
 /**
@@ -58,7 +65,11 @@ export function createProvider(url: string, chainId: bigint, timeoutMs: number):
  * the chain and must never be mistaken for "not deployed".
  */
 export function isContractError(err: unknown): boolean {
-  return isError(err, 'BAD_DATA') || isError(err, 'CALL_EXCEPTION');
+  if (isError(err, 'CALL_EXCEPTION')) return true;
+  // ethers also uses BAD_DATA for "missing response for request", which is the RPC endpoint
+  // answering a batch or request in an unexpected shape (rate limits, proxies): a transport
+  // problem, not a statement about the contract.
+  return isError(err, 'BAD_DATA') && !/missing response/i.test(err.shortMessage);
 }
 
 /** `.catch` handler that turns contract errors into `undefined` and lets transport errors propagate. */
@@ -91,7 +102,7 @@ export class ProviderPool {
   private async connect(url: string, chainId: bigint): Promise<JsonRpcProvider> {
     const provider = createProvider(url, chainId, this.timeoutMs);
     try {
-      const actual = BigInt(await provider.send('eth_chainId', []));
+      const actual = BigInt(await withRetries(`eth_chainId on ${url}`, () => provider.send('eth_chainId', [])));
       if (actual !== chainId) throw new Error(`RPC ${url} serves chain ${actual}, expected ${chainId}`);
       return provider;
     } catch (err) {
@@ -131,7 +142,7 @@ export async function inspectChainOnL1(
   diamondProxy: string,
 ): Promise<L1Inspection> {
   const diamond = new Contract(diamondProxy, DIAMOND_PROXY_ABI, l1) as DiamondProxy;
-  const bridgehubAddress = await diamond.getBridgehub().catch(undefinedIfContractError);
+  const bridgehubAddress = await withRetries('getBridgehub()', () => diamond.getBridgehub()).catch(undefinedIfContractError);
   if (!bridgehubAddress || !isAddress(bridgehubAddress) || bridgehubAddress === ZeroAddress) {
     return {
       onL1: false,
@@ -142,8 +153,8 @@ export async function inspectChainOnL1(
 
   const bridgehub = bridgehubAt(bridgehubAddress, l1);
   const registered =
-    (await bridgehub.getZKChain(chainId).catch(undefinedIfContractError)) ??
-    (await bridgehub.getHyperchain(chainId).catch(undefinedIfContractError));
+    (await withRetries('getZKChain()', () => bridgehub.getZKChain(chainId)).catch(undefinedIfContractError)) ??
+    (await withRetries('getHyperchain()', () => bridgehub.getHyperchain(chainId)).catch(undefinedIfContractError));
   if (!registered || registered.toLowerCase() !== diamondProxy.toLowerCase()) {
     return {
       onL1: false,
@@ -153,7 +164,7 @@ export async function inspectChainOnL1(
   }
 
   // Pre-v26 Bridgehubs have no settlementLayer(): everything they know settles on L1.
-  const settlementLayer = await bridgehub.settlementLayer(chainId).catch((err: unknown) => {
+  const settlementLayer = await withRetries('settlementLayer()', () => bridgehub.settlementLayer(chainId)).catch((err: unknown) => {
     if (isContractError(err)) return l1ChainId;
     throw err;
   });

@@ -15,6 +15,7 @@ import { ETH_TOKEN_ADDRESS, type Bridgehub } from './chain.ts';
 import type { Config } from './config.ts';
 import { eth, gwei } from './format.ts';
 import * as log from './log.ts';
+import { withRetries } from './retry.ts';
 
 /** A top-up that could not be done. The message is reported and makes the run fail. */
 export class FundingError extends Error {}
@@ -30,6 +31,9 @@ interface Fees {
   maxFeePerGas: bigint;
   maxPriorityFeePerGas: bigint;
 }
+
+/** 0.1 gwei: lowest priority fee the job offers. */
+const MIN_PRIORITY_FEE_WEI = 100_000_000n;
 
 export class Funder {
   readonly address: string;
@@ -64,7 +68,7 @@ export class Funder {
   }
 
   balance(): Promise<bigint> {
-    return this.l1.getBalance(this.address);
+    return withRetries('funder balance', () => this.l1.getBalance(this.address));
   }
 
   txUrl(hash: string): string {
@@ -100,7 +104,7 @@ export class Funder {
   async depositL2(bridgehub: Bridgehub, chainId: bigint, to: string, amount: bigint): Promise<FundingResult> {
     const bridgehubAddress = await bridgehub.getAddress();
 
-    const baseToken = await bridgehub.baseToken(chainId).catch(() => 'unknown');
+    const baseToken = await withRetries('baseToken()', () => bridgehub.baseToken(chainId)).catch(() => 'unknown');
     if (baseToken.toLowerCase() !== ETH_TOKEN_ADDRESS) {
       throw new FundingError(
         `chain ${chainId} uses base token ${baseToken}; only ETH-based chains can be topped up ` +
@@ -110,9 +114,9 @@ export class Funder {
 
     const fees = await this.fees();
     const { l2GasLimit, l2GasPerPubdata } = this.config;
-    const baseCost = await bridgehub
-      .l2TransactionBaseCost(chainId, fees.maxFeePerGas, l2GasLimit, l2GasPerPubdata)
-      .catch((err: unknown) => {
+    const baseCost = await withRetries('l2TransactionBaseCost()', () =>
+      bridgehub.l2TransactionBaseCost(chainId, fees.maxFeePerGas, l2GasLimit, l2GasPerPubdata),
+    ).catch((err: unknown) => {
         throw new FundingError(`failed to compute l2TransactionBaseCost for chain ${chainId}: ${log.errorMessage(err)}`);
       });
     const mintValue = amount + baseCost;
@@ -169,17 +173,30 @@ export class Funder {
     log.info(`     funder balance ${eth(have)} ETH, ok to spend ${eth(amount)} ETH`);
   }
 
-  /** Current L1 gas price plus the configured buffer, pinned as the max fee of the next tx. */
+  /**
+   * Current L1 gas price plus the configured buffer, pinned as the max fee of the next tx.
+   * Asks the node directly (eth_gasPrice, eth_maxPriorityFeePerGas) rather than through
+   * ethers' getFeeData, which bundles several calls and depends on how the RPC provider
+   * answers batches.
+   */
   private async fees(): Promise<Fees> {
-    const feeData = await this.l1.getFeeData().catch((err: unknown) => {
-      throw new FundingError(`failed to fetch the L1 gas price: ${log.errorMessage(err)}`);
-    });
-    const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas;
-    if (gasPrice === null) throw new FundingError('the L1 RPC returned no gas price');
+    const gasPrice = BigInt(
+      await withRetries('eth_gasPrice', () => this.l1.send('eth_gasPrice', [])).catch((err: unknown) => {
+        throw new FundingError(`failed to fetch the L1 gas price: ${log.errorMessage(err)}`);
+      }),
+    );
+    // Not every RPC supports eth_maxPriorityFeePerGas; fall back to a 1 gwei tip. Some
+    // suggest near-zero tips on Sepolia, which risks slow inclusion, so the tip is floored
+    // at 0.1 gwei; the max fee caps what is actually paid.
+    const suggestedTip = BigInt(
+      await withRetries('eth_maxPriorityFeePerGas', () => this.l1.send('eth_maxPriorityFeePerGas', [])).catch(
+        () => 1_000_000_000n,
+      ),
+    );
+    const tip = suggestedTip > MIN_PRIORITY_FEE_WEI ? suggestedTip : MIN_PRIORITY_FEE_WEI;
 
     const maxFeePerGas = (gasPrice * (100n + this.config.gasPriceBufferPercent)) / 100n;
-    const suggestedTip = feeData.maxPriorityFeePerGas ?? 0n;
-    const maxPriorityFeePerGas = suggestedTip < maxFeePerGas ? suggestedTip : maxFeePerGas;
+    const maxPriorityFeePerGas = tip < maxFeePerGas ? tip : maxFeePerGas;
     log.info(
       `     L1 gas price ${gwei(gasPrice)} gwei, max fee for this tx ${gwei(maxFeePerGas)} gwei ` +
         `(+${this.config.gasPriceBufferPercent}%), priority fee ${gwei(maxPriorityFeePerGas)} gwei`,
