@@ -5,7 +5,7 @@
 import type { JsonRpcProvider } from 'ethers';
 
 import { ProviderPool, createProvider, inspectChainOnL1, type Bridgehub } from './chain.ts';
-import { isDryRun, loadConfig, type Config, type Thresholds } from './config.ts';
+import { isDryRun, loadConfig, operatorThresholds, type Config, type Thresholds } from './config.ts';
 import { eth } from './format.ts';
 import { Funder, FundingError } from './funding.ts';
 import {
@@ -100,9 +100,10 @@ class Run {
     }
 
     const { bridgehub, bridgehubAddress, settlementLayer } = inspection;
+    const stack = data.isZkSyncOs === true ? 'ZKsync OS' : data.isZkSyncOs === false ? 'EraVM' : 'stack unknown';
     log.info();
     log.info(
-      `=== ${chain.chain} (${chain.ecosystem}, chain ${chainId}): diamond proxy ${diamondProxy}, ` +
+      `=== ${chain.chain} (${chain.ecosystem}, chain ${chainId}, ${stack}): diamond proxy ${diamondProxy}, ` +
         `bridgehub ${bridgehubAddress}, settlement layer ${settlementLayer}`,
     );
 
@@ -129,6 +130,7 @@ class Run {
     // cache could make the job fund the same wallet over and over.
     const settlesOnL1 = settlementLayer === this.l1ChainId;
     const settlementRpc = settlesOnL1 ? undefined : l2RpcUrlOf(this.registry, chain.ecosystem, settlementLayer);
+    const operator = operatorThresholds(this.config, data.isZkSyncOs);
     for (const role of OPERATOR_ROLES) {
       const address = resolveOperator(role, chain, data);
       const read = settlesOnL1
@@ -140,7 +142,7 @@ class Run {
         label: `${role} operator`,
         address,
         chainId: settlementLayer,
-        thresholds: this.config.operator,
+        thresholds: operator,
         bridgehub,
       });
     }
@@ -311,7 +313,8 @@ async function run(config: Config, report: Report, l1: JsonRpcProvider, provider
   log.info(`Funder:            ${funder.address} (${eth(startBalance)} ETH)`);
   log.info(`L1 RPC chain ID:   ${config.l1ChainId}`);
   log.info(`Dry run:           ${config.dryRun}${funder.sendsTransactions ? '' : ' (no transaction will be signed)'}`);
-  log.info(`Operator:          min ${eth(config.operator.min)} ETH, target ${eth(config.operator.target)} ETH`);
+  log.info(`Operator:          min ${eth(config.operator.min)} ETH, target ${eth(config.operator.target)} ETH (ZKsync OS)`);
+  log.info(`EraVM operator:    min ${eth(config.eravmOperator.min)} ETH, target ${eth(config.eravmOperator.target)} ETH`);
   log.info(`Watchdog L1:       min ${eth(config.watchdogL1.min)} ETH, target ${eth(config.watchdogL1.target)} ETH`);
   log.info(`Watchdog L2:       min ${eth(config.watchdogL2.min)} ETH, target ${eth(config.watchdogL2.target)} ETH`);
   log.info(

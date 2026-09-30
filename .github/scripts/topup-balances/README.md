@@ -35,7 +35,9 @@ and testnet ecosystems, ZKsync OS and EraVM alike) funded. Runs from
 4. Collects the funding targets of every chain:
    - the commit, prove and execute operators on the settlement layer, resolved with the same
      precedence as the Jarvis dashboard (sender of the last tx, service-discovered, manually
-     configured, first validator);
+     configured, first validator). EraVM operators are kept at a higher balance than ZKsync
+     OS ones (`ERAVM_OPERATOR_*` vs `OPERATOR_*`); a chain whose stack Jarvis could not
+     determine gets whichever set has the higher minimum;
    - the watchdog on L1 (it pays for its deposit flows there);
    - the watchdog on L2, except on Prividium chains, where the L2 balance cannot be read and
      the target is listed as skipped.
@@ -83,7 +85,8 @@ Everything comes from environment variables. Amounts are in ETH and may have dec
 | `JARVIS_API_URL` | `https://api.jarvis.matterhosted.dev` | Jarvis chains API |
 | `JARVIS_API_TOKEN` | required | Bearer JWT with the `chains:read` scope |
 | `JARVIS_PAYLOAD_FILE` | | Testing: read the registry from a file instead |
-| `OPERATOR_MIN_ETH` / `OPERATOR_TARGET_ETH` | `5` / `10` | Operator thresholds |
+| `OPERATOR_MIN_ETH` / `OPERATOR_TARGET_ETH` | `5` / `10` | Operator thresholds of ZKsync OS chains |
+| `ERAVM_OPERATOR_MIN_ETH` / `ERAVM_OPERATOR_TARGET_ETH` | `10` / `20` | Operator thresholds of EraVM chains |
 | `WATCHDOG_L1_MIN_ETH` / `WATCHDOG_L1_TARGET_ETH` | `0.2` / `0.5` | Watchdog L1 thresholds |
 | `WATCHDOG_L2_MIN_ETH` / `WATCHDOG_L2_TARGET_ETH` | `0.5` / `1.5` | Watchdog L2 thresholds |
 | `FUNDER_MIN_ETH` | `20` | Fail when the funder ends the run below this (two operator top-ups) |

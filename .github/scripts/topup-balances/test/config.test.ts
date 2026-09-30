@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseEther } from 'ethers';
 
-import { ConfigError, loadConfig } from '../src/config.ts';
+import { ConfigError, loadConfig, operatorThresholds } from '../src/config.ts';
 
 const BASE = { L1_RPC_URL: 'http://localhost:8545', FUNDER_PRIVATE_KEY: `0x${'11'.repeat(32)}` };
 
@@ -11,6 +11,7 @@ describe('loadConfig', () => {
     const config = loadConfig(BASE);
     assert.equal(config.l1ChainId, 11155111);
     assert.deepEqual(config.operator, { min: parseEther('5'), target: parseEther('10') });
+    assert.deepEqual(config.eravmOperator, { min: parseEther('10'), target: parseEther('20') });
     assert.deepEqual(config.watchdogL2, { min: parseEther('0.5'), target: parseEther('1.5') });
     assert.equal(config.gasPriceBufferPercent, 50n);
     assert.equal(config.funderMin, parseEther('20'));
@@ -41,6 +42,10 @@ describe('loadConfig', () => {
       () => loadConfig({ ...BASE, WATCHDOG_L1_MIN_ETH: '1', WATCHDOG_L1_TARGET_ETH: '0.5' }),
       (err: unknown) => err instanceof ConfigError && /WATCHDOG_L1_TARGET_ETH/.test(err.message),
     );
+    assert.throws(
+      () => loadConfig({ ...BASE, ERAVM_OPERATOR_MIN_ETH: '10', ERAVM_OPERATOR_TARGET_ETH: '5' }),
+      (err: unknown) => err instanceof ConfigError && /ERAVM_OPERATOR_TARGET_ETH/.test(err.message),
+    );
   });
 
   it('requires a key unless dry-run, and an address in dry-run without a key', () => {
@@ -62,5 +67,20 @@ describe('loadConfig', () => {
     assert.equal(config.skipNamePattern, undefined);
     assert.deepEqual(config.skipEcosystems, []);
     assert.deepEqual(config.includeChains, []);
+  });
+});
+
+describe('operatorThresholds', () => {
+  const config = loadConfig(BASE);
+
+  it('picks the thresholds of the chain stack', () => {
+    assert.equal(operatorThresholds(config, true), config.operator);
+    assert.equal(operatorThresholds(config, false), config.eravmOperator);
+  });
+
+  it('gives a chain of unknown stack the set with the higher minimum', () => {
+    assert.equal(operatorThresholds(config, undefined), config.eravmOperator);
+    const lowEraVm = loadConfig({ ...BASE, ERAVM_OPERATOR_MIN_ETH: '1', ERAVM_OPERATOR_TARGET_ETH: '2' });
+    assert.equal(operatorThresholds(lowEraVm, undefined), lowEraVm.operator);
   });
 });
