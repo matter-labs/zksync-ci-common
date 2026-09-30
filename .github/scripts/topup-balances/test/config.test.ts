@@ -11,7 +11,7 @@ describe('loadConfig', () => {
     const config = loadConfig(BASE);
     assert.equal(config.l1ChainId, 11155111);
     assert.deepEqual(config.operator, { min: parseEther('5'), target: parseEther('10') });
-    assert.deepEqual(config.eravmOperator, { min: parseEther('10'), target: parseEther('20') });
+    assert.deepEqual(config.eravmOperator, { min: parseEther('10'), target: parseEther('15') });
     assert.deepEqual(config.watchdogL2, { min: parseEther('0.5'), target: parseEther('1.5') });
     assert.equal(config.gasPriceBufferPercent, 50n);
     assert.equal(config.funderMin, parseEther('20'));

@@ -86,7 +86,7 @@ Everything comes from environment variables. Amounts are in ETH and may have dec
 | `JARVIS_API_TOKEN` | required | Bearer JWT with the `chains:read` scope |
 | `JARVIS_PAYLOAD_FILE` | | Testing: read the registry from a file instead |
 | `OPERATOR_MIN_ETH` / `OPERATOR_TARGET_ETH` | `5` / `10` | Operator thresholds of ZKsync OS chains |
-| `ERAVM_OPERATOR_MIN_ETH` / `ERAVM_OPERATOR_TARGET_ETH` | `10` / `20` | Operator thresholds of EraVM chains |
+| `ERAVM_OPERATOR_MIN_ETH` / `ERAVM_OPERATOR_TARGET_ETH` | `10` / `15` | Operator thresholds of EraVM chains |
 | `WATCHDOG_L1_MIN_ETH` / `WATCHDOG_L1_TARGET_ETH` | `0.2` / `0.5` | Watchdog L1 thresholds |
 | `WATCHDOG_L2_MIN_ETH` / `WATCHDOG_L2_TARGET_ETH` | `0.5` / `1.5` | Watchdog L2 thresholds |
 | `FUNDER_MIN_ETH` | `20` | Fail when the funder ends the run below this (two operator top-ups) |
