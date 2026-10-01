@@ -26,6 +26,7 @@ export interface Config {
   /** Operators of EraVM chains, kept at a higher balance than ZKsync OS ones. */
   eravmOperator: Thresholds;
   watchdogL1: Thresholds;
+  watchdogL2: Thresholds;
   /** The run fails when the funder ends below this. */
   funderMin: bigint;
   /** ETH the funder must keep for L1 gas. */
@@ -70,6 +71,8 @@ const DEFAULTS: Record<string, string> = {
   ERAVM_OPERATOR_TARGET_ETH: '15',
   WATCHDOG_L1_MIN_ETH: '0.2',
   WATCHDOG_L1_TARGET_ETH: '0.5',
+  WATCHDOG_L2_MIN_ETH: '0.5',
+  WATCHDOG_L2_TARGET_ETH: '1.5',
   FUNDER_MIN_ETH: '20',
   FUNDER_GAS_RESERVE_ETH: '0.05',
   L2_GAS_LIMIT: '10000000',
@@ -159,6 +162,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     operator: thresholds('OPERATOR_MIN_ETH', 'OPERATOR_TARGET_ETH'),
     eravmOperator: thresholds('ERAVM_OPERATOR_MIN_ETH', 'ERAVM_OPERATOR_TARGET_ETH'),
     watchdogL1: thresholds('WATCHDOG_L1_MIN_ETH', 'WATCHDOG_L1_TARGET_ETH'),
+    watchdogL2: thresholds('WATCHDOG_L2_MIN_ETH', 'WATCHDOG_L2_TARGET_ETH'),
     funderMin: eth('FUNDER_MIN_ETH'),
     funderGasReserve: eth('FUNDER_GAS_RESERVE_ETH'),
     l2GasLimit: integer('L2_GAS_LIMIT'),

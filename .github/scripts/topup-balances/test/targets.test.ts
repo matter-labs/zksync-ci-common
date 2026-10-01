@@ -23,6 +23,6 @@ describe('SeenTargets', () => {
   it('treats the same address on different chains as different targets', () => {
     const seen = new SeenTargets();
     assert.equal(seen.claim(1n, ADDRESS, 5n, 'a/watchdog L1'), undefined);
-    assert.equal(seen.claim(2705n, ADDRESS, 5n, 'b/commit operator'), undefined);
+    assert.equal(seen.claim(2705n, ADDRESS, 5n, 'a/watchdog L2'), undefined);
   });
 });

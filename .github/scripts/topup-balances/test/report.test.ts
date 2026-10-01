@@ -35,7 +35,7 @@ describe('Report', () => {
   it('builds a Slack payload with escaped problems, transactions and a log link', () => {
     const report = new Report(true);
     report.error('balance 0.25 ETH < 0.5 ETH & falling');
-    report.actions.push('demo/commit operator: dry run: would deposit 1 ETH');
+    report.actions.push('demo/watchdog L2: dry run: would deposit 1 ETH');
 
     const payload = report.slackPayload({ repository: 'org/repo', workflow: 'wf', runUrl: 'https://run' });
     const blocks = payload['blocks'] as { type: string; text?: { text: string }; elements?: { url: string }[] }[];

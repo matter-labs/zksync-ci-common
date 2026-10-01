@@ -38,18 +38,16 @@ and testnet ecosystems, ZKsync OS and EraVM alike) funded. Runs from
      configured, first validator). EraVM operators are kept at a higher balance than ZKsync
      OS ones (`ERAVM_OPERATOR_*` vs `OPERATOR_*`); a chain whose stack Jarvis could not
      determine gets whichever set has the higher minimum;
-   - the watchdog on L1. Its L2 balance is not a target: the watchdog's deposit flow tops it
-     up from the L1 wallet (`FLOW_DEPOSIT_L2_BALANCE_MIN` / `_TARGET` in the watchdog). That
-     also covers Prividium chains, where the job could neither read the L2 balance nor
-     deposit to the watchdog, since their L1 transaction filterer only lets a wallet deposit
-     to its own address.
-5. Reads the balances live: from the L1 RPC for L1 targets, from the settlement layer's RPC
-   for operators of chains that settle on a Gateway chain. The Jarvis cache is never used as a balance source: a balance that cannot be
+   - the watchdog on L1 (it pays for its deposit flows there);
+   - the watchdog on L2, except on Prividium chains, where the L2 balance cannot be read and
+     the target is listed as skipped.
+5. Reads the balances live: from the L1 RPC for L1 targets, from the chain's L2 RPC for L2
+   targets. The Jarvis cache is never used as a balance source: a balance that cannot be
    read is reported as an error and not topped up, so a broken RPC or registry entry can
    never make the job fund a wallet repeatedly.
 6. Tops up every target below its minimum up to its target balance from the funder wallet:
    - L1 targets get a plain ETH transfer;
-   - operators on a Gateway chain get a `Bridgehub.requestL2TransactionDirect` deposit. The L2 gas cost is
+   - L2 targets get a `Bridgehub.requestL2TransactionDirect` deposit. The L2 gas cost is
      taken from `l2TransactionBaseCost` at a buffered gas price that is also pinned as the
      tx max fee, so the deposit can never be underfunded; the surplus is refunded on L2.
    Every check and every transaction (parameters, nonce, gas price, receipt, explorer link)
@@ -66,8 +64,8 @@ and testnet ecosystems, ZKsync OS and EraVM alike) funded. Runs from
    custom base token), a balance that could not be read, the funder ending below its
    minimum, or a Jarvis token that expires soon.
 
-Only ETH-based targets can be funded: an operator on a custom-base-token Gateway chain is
-reported as an error when it is low.
+Only ETH-based targets can be funded. Custom-base-token chains still get their operators
+funded on L1; their L2 watchdog is reported as an error when it is low.
 
 `DRY_RUN=true` checks and reports everything but never signs a transaction, even when a
 funder key is configured.
@@ -90,6 +88,7 @@ Everything comes from environment variables. Amounts are in ETH and may have dec
 | `OPERATOR_MIN_ETH` / `OPERATOR_TARGET_ETH` | `5` / `10` | Operator thresholds of ZKsync OS chains |
 | `ERAVM_OPERATOR_MIN_ETH` / `ERAVM_OPERATOR_TARGET_ETH` | `10` / `15` | Operator thresholds of EraVM chains |
 | `WATCHDOG_L1_MIN_ETH` / `WATCHDOG_L1_TARGET_ETH` | `0.2` / `0.5` | Watchdog L1 thresholds |
+| `WATCHDOG_L2_MIN_ETH` / `WATCHDOG_L2_TARGET_ETH` | `0.5` / `1.5` | Watchdog L2 thresholds |
 | `FUNDER_MIN_ETH` | `20` | Fail when the funder ends the run below this (two operator top-ups) |
 | `FUNDER_GAS_RESERVE_ETH` | `0.05` | ETH the funder keeps for L1 gas |
 | `L2_GAS_LIMIT` | `10000000` | L2 gas limit of deposits |

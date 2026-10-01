@@ -34,7 +34,7 @@ interface Target extends BalanceRead {
   chain: string;
   label: string;
   address: string | undefined;
-  /** Chain the balance lives on: the settlement layer for operators, L1 for the watchdog. */
+  /** Chain the balance lives on: the settlement layer for operators, L1 or the chain itself for the watchdog. */
   chainId: bigint;
   thresholds: Thresholds;
   /** L1 Bridgehub of the chain's ecosystem, used for L2 deposits. */
@@ -109,9 +109,11 @@ class Run {
 
     // Only live chains are funded: the sequencer must have produced a block recently. A chain
     // whose liveness cannot be verified is not touched either. Prividium chains are the
-    // exception: their L2 RPC is auth-gated, so Jarvis listing them as normal is taken as live.
-    if (chain.prividium === true) {
-      log.info(`${chain.chain}: Prividium chain, L2 RPC is auth-gated: liveness taken from Jarvis`);
+    // exception: their L2 RPC is auth-gated, so Jarvis listing them as normal is taken as
+    // live, and only their L1 side (operators, watchdog L1) is handled.
+    const prividium = chain.prividium === true;
+    if (prividium) {
+      log.info(`${chain.chain}: Prividium chain, L2 RPC is auth-gated: liveness taken from Jarvis, watchdog L2 not checked`);
     } else if (this.config.maxL2BlockAgeMs > 0) {
       const liveness = await this.l2Liveness(chain.l2RpcUrl, chainId);
       if (!liveness.live) {
@@ -145,8 +147,7 @@ class Run {
       });
     }
 
-    // The watchdog is funded on L1 only: its deposit flow tops up its own L2 balance from there
-    // (FLOW_DEPOSIT_L2_BALANCE_MIN / _TARGET in the watchdog).
+    // The watchdog needs ETH on L1 (its deposit flows) and on L2 (transfers, withdrawals).
     const watchdog = chain.watchdogAddress;
     if (!watchdog) {
       log.info(`${chain.chain}: no watchdog address in Jarvis`);
@@ -159,6 +160,28 @@ class Run {
       address: watchdog,
       chainId: this.l1ChainId,
       thresholds: this.config.watchdogL1,
+      bridgehub,
+    });
+    if (prividium) {
+      log.info(`${chain.chain}/watchdog L2: skipped, Prividium L2 balance is not readable`);
+      this.report.rows.push({
+        chain: chain.chain,
+        label: 'watchdog L2',
+        address: watchdog,
+        chainId,
+        min: this.config.watchdogL2.min,
+        action: 'skipped',
+        details: 'Prividium chain, L2 balance not readable',
+      });
+      return;
+    }
+    await this.ensure({
+      ...(await this.l2Balance(chain.l2RpcUrl, chainId, watchdog, 'L2')),
+      chain: chain.chain,
+      label: 'watchdog L2',
+      address: watchdog,
+      chainId,
+      thresholds: this.config.watchdogL2,
       bridgehub,
     });
   }
@@ -293,6 +316,7 @@ async function run(config: Config, report: Report, l1: JsonRpcProvider, provider
   log.info(`Operator:          min ${eth(config.operator.min)} ETH, target ${eth(config.operator.target)} ETH (ZKsync OS)`);
   log.info(`EraVM operator:    min ${eth(config.eravmOperator.min)} ETH, target ${eth(config.eravmOperator.target)} ETH`);
   log.info(`Watchdog L1:       min ${eth(config.watchdogL1.min)} ETH, target ${eth(config.watchdogL1.target)} ETH`);
+  log.info(`Watchdog L2:       min ${eth(config.watchdogL2.min)} ETH, target ${eth(config.watchdogL2.target)} ETH`);
   log.info(
     `Deposit params:    L2 gas limit ${config.l2GasLimit}, gas per pubdata ${config.l2GasPerPubdata}, ` +
       `gas price buffer +${config.gasPriceBufferPercent}%`,
