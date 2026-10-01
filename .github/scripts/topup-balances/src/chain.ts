@@ -22,7 +22,13 @@ export const BRIDGEHUB_ABI = [
   'function requestL2TransactionDirect((uint256 chainId, uint256 mintValue, address l2Contract, uint256 l2Value, bytes l2Calldata, uint256 l2GasLimit, uint256 l2GasPerPubdataByteLimit, bytes[] factoryDeps, address refundRecipient) request) payable returns (bytes32)',
 ] as const;
 
-const DIAMOND_PROXY_ABI = ['function getBridgehub() view returns (address)'] as const;
+const DIAMOND_PROXY_ABI = [
+  'function getBridgehub() view returns (address)',
+  'function baseTokenGasPriceMultiplierNominator() view returns (uint128)',
+  'function baseTokenGasPriceMultiplierDenominator() view returns (uint128)',
+] as const;
+
+const ERC20_ABI = ['function symbol() view returns (string)'] as const;
 
 /**
  * Typed view of the Bridgehub methods this job uses. ethers' `Contract` only knows the
@@ -37,7 +43,13 @@ export type Bridgehub = {
   requestL2TransactionDirect: ContractMethod;
 } & Contract;
 
-type DiamondProxy = { getBridgehub(): Promise<string> } & Contract;
+type DiamondProxy = {
+  getBridgehub(): Promise<string>;
+  baseTokenGasPriceMultiplierNominator(): Promise<bigint>;
+  baseTokenGasPriceMultiplierDenominator(): Promise<bigint>;
+} & Contract;
+
+type Erc20 = { symbol(): Promise<string> } & Contract;
 
 export function bridgehubAt(address: string, provider: JsonRpcProvider): Bridgehub {
   return new Contract(address, BRIDGEHUB_ABI, provider) as Bridgehub;
@@ -169,4 +181,38 @@ export async function inspectChainOnL1(
     throw err;
   });
   return { onL1: true, bridgehub, bridgehubAddress, settlementLayer };
+}
+
+/**
+ * A chain's base token: ETH, or an ERC-20 together with the ratio the chain prices L2 gas
+ * at, set on its L1 diamond proxy: `amount` wei of ETH cost `amount * nominator / denominator`
+ * base token units.
+ */
+export type BaseToken =
+  | { eth: true }
+  | { eth: false; address: string; symbol: string; nominator: bigint; denominator: bigint };
+
+/** Reads a chain's base token and, for a custom one, its L1 conversion ratio. Errors are thrown. */
+export async function readBaseToken(
+  l1: JsonRpcProvider,
+  bridgehub: Bridgehub,
+  chainId: bigint,
+  diamondProxy: string,
+): Promise<BaseToken> {
+  const address = await withRetries('baseToken()', () => bridgehub.baseToken(chainId));
+  if (address.toLowerCase() === ETH_TOKEN_ADDRESS) return { eth: true };
+
+  const diamond = new Contract(diamondProxy, DIAMOND_PROXY_ABI, l1) as DiamondProxy;
+  const nominator = await withRetries('baseTokenGasPriceMultiplierNominator()', () =>
+    diamond.baseTokenGasPriceMultiplierNominator(),
+  );
+  const denominator = await withRetries('baseTokenGasPriceMultiplierDenominator()', () =>
+    diamond.baseTokenGasPriceMultiplierDenominator(),
+  );
+  if (denominator === 0n) throw new Error(`diamond proxy ${diamondProxy} has no base token gas price ratio set`);
+
+  // The symbol is for display only.
+  const token = new Contract(address, ERC20_ABI, l1) as Erc20;
+  const symbol = await withRetries('symbol()', () => token.symbol()).catch(() => 'base token');
+  return { eth: false, address, symbol, nominator, denominator };
 }

@@ -196,3 +196,15 @@ export function operatorThresholds(
   if (isZkSyncOs === false) return config.eravmOperator;
   return config.eravmOperator.min >= config.operator.min ? config.eravmOperator : config.operator;
 }
+
+/**
+ * Thresholds converted from ETH into a custom base token at the ratio the chain prices L2 gas
+ * at (`nominator / denominator` base token units per wei), so a wallet paying gas in the base
+ * token gets the same headroom as one paying in ETH.
+ */
+export function inBaseToken(thresholds: Thresholds, nominator: bigint, denominator: bigint): Thresholds {
+  return {
+    min: (thresholds.min * nominator) / denominator,
+    target: (thresholds.target * nominator) / denominator,
+  };
+}

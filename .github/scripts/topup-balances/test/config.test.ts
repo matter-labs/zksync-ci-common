@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseEther } from 'ethers';
+import { formatEther, parseEther } from 'ethers';
 
-import { ConfigError, loadConfig, operatorThresholds } from '../src/config.ts';
+import { ConfigError, inBaseToken, loadConfig, operatorThresholds } from '../src/config.ts';
 
 const BASE = { L1_RPC_URL: 'http://localhost:8545', FUNDER_PRIVATE_KEY: `0x${'11'.repeat(32)}` };
 
@@ -82,5 +82,23 @@ describe('operatorThresholds', () => {
     assert.equal(operatorThresholds(config, undefined), config.eravmOperator);
     const lowEraVm = loadConfig({ ...BASE, ERAVM_OPERATOR_MIN_ETH: '1', ERAVM_OPERATOR_TARGET_ETH: '2' });
     assert.equal(operatorThresholds(lowEraVm, undefined), lowEraVm.operator);
+  });
+});
+
+describe('inBaseToken', () => {
+  const watchdogL2 = { min: parseEther('0.5'), target: parseEther('1.5') };
+
+  it('converts ETH thresholds at the L1 gas price ratio of the chain', () => {
+    // lens_stage on Sepolia: 132 GRASS per ETH.
+    assert.deepEqual(inBaseToken(watchdogL2, 132n, 1n), { min: parseEther('66'), target: parseEther('198') });
+    // era_stage_validium on Sepolia: 1e8 / 136853, about 730.7 DANIL per ETH.
+    const validium = inBaseToken(watchdogL2, 100_000_000n, 136_853n);
+    assert.equal(validium.min, (parseEther('0.5') * 100_000_000n) / 136_853n);
+    assert.equal(formatEther(validium.min).slice(0, 7), '365.355');
+  });
+
+  it('keeps the thresholds at a 1:1 ratio and a disabled check disabled', () => {
+    assert.deepEqual(inBaseToken(watchdogL2, 1n, 1n), watchdogL2);
+    assert.deepEqual(inBaseToken({ min: 0n, target: 0n }, 132n, 1n), { min: 0n, target: 0n });
   });
 });
