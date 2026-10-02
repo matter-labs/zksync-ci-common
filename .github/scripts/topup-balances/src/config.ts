@@ -21,7 +21,10 @@ export interface Config {
   /** Derived from the key when one is given. */
   funderAddress?: string;
   dryRun: boolean;
+  /** Operators of ZKsync OS chains. */
   operator: Thresholds;
+  /** Operators of EraVM chains, kept at a higher balance than ZKsync OS ones. */
+  eravmOperator: Thresholds;
   watchdogL1: Thresholds;
   watchdogL2: Thresholds;
   /** The run fails when the funder ends below this. */
@@ -64,6 +67,8 @@ const DEFAULTS: Record<string, string> = {
   L1_EXPLORER_URL: 'https://sepolia.etherscan.io',
   OPERATOR_MIN_ETH: '5',
   OPERATOR_TARGET_ETH: '10',
+  ERAVM_OPERATOR_MIN_ETH: '10',
+  ERAVM_OPERATOR_TARGET_ETH: '15',
   WATCHDOG_L1_MIN_ETH: '0.2',
   WATCHDOG_L1_TARGET_ETH: '0.5',
   WATCHDOG_L2_MIN_ETH: '0.5',
@@ -155,6 +160,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     funderAddress,
     dryRun,
     operator: thresholds('OPERATOR_MIN_ETH', 'OPERATOR_TARGET_ETH'),
+    eravmOperator: thresholds('ERAVM_OPERATOR_MIN_ETH', 'ERAVM_OPERATOR_TARGET_ETH'),
     watchdogL1: thresholds('WATCHDOG_L1_MIN_ETH', 'WATCHDOG_L1_TARGET_ETH'),
     watchdogL2: thresholds('WATCHDOG_L2_MIN_ETH', 'WATCHDOG_L2_TARGET_ETH'),
     funderMin: eth('FUNDER_MIN_ETH'),
@@ -174,5 +180,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     jarvisTokenMinDays: Number(integer('JARVIS_TOKEN_MIN_DAYS')),
     rpcTimeoutMs: Number(integer('RPC_TIMEOUT')) * 1000,
     txTimeoutMs: Number(integer('TX_TIMEOUT')) * 1000,
+  };
+}
+
+/**
+ * Operator thresholds of a chain, by its stack (Jarvis `isZkSyncOs`). A chain whose stack
+ * Jarvis does not know gets the set with the higher minimum, so its balance alerts, which
+ * are set below the job's minimum, cannot fire while the job considers the wallet funded.
+ */
+export function operatorThresholds(
+  config: Pick<Config, 'operator' | 'eravmOperator'>,
+  isZkSyncOs: boolean | undefined,
+): Thresholds {
+  if (isZkSyncOs === true) return config.operator;
+  if (isZkSyncOs === false) return config.eravmOperator;
+  return config.eravmOperator.min >= config.operator.min ? config.eravmOperator : config.operator;
+}
+
+/**
+ * Thresholds converted from ETH into a custom base token at the ratio the chain prices L2 gas
+ * at (`nominator / denominator` base token units per wei), so a wallet paying gas in the base
+ * token gets the same headroom as one paying in ETH.
+ */
+export function inBaseToken(thresholds: Thresholds, nominator: bigint, denominator: bigint): Thresholds {
+  return {
+    min: (thresholds.min * nominator) / denominator,
+    target: (thresholds.target * nominator) / denominator,
   };
 }

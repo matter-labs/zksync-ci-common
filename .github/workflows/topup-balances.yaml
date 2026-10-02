@@ -31,7 +31,8 @@ name: Top up operator and watchdog balances
 #                              Do not reuse the release-notification webhook.
 #
 # Optional repository variables (defaults are in the script):
-#   TOPUP_OPERATOR_MIN_ETH, TOPUP_OPERATOR_TARGET_ETH,
+#   TOPUP_OPERATOR_MIN_ETH, TOPUP_OPERATOR_TARGET_ETH (ZKsync OS operators),
+#   TOPUP_ERAVM_OPERATOR_MIN_ETH, TOPUP_ERAVM_OPERATOR_TARGET_ETH (EraVM operators),
 #   TOPUP_WATCHDOG_L1_MIN_ETH, TOPUP_WATCHDOG_L1_TARGET_ETH,
 #   TOPUP_WATCHDOG_L2_MIN_ETH, TOPUP_WATCHDOG_L2_TARGET_ETH,
 #   TOPUP_FUNDER_ADDRESS (lets dry runs work before the funder key secret exists),
@@ -116,6 +117,8 @@ jobs:
           SKIP_CHAINS: ${{ inputs.skip-chains || vars.TOPUP_SKIP_CHAINS || '' }}
           OPERATOR_MIN_ETH: ${{ vars.TOPUP_OPERATOR_MIN_ETH || '5' }}
           OPERATOR_TARGET_ETH: ${{ vars.TOPUP_OPERATOR_TARGET_ETH || '10' }}
+          ERAVM_OPERATOR_MIN_ETH: ${{ vars.TOPUP_ERAVM_OPERATOR_MIN_ETH || '10' }}
+          ERAVM_OPERATOR_TARGET_ETH: ${{ vars.TOPUP_ERAVM_OPERATOR_TARGET_ETH || '15' }}
           WATCHDOG_L1_MIN_ETH: ${{ vars.TOPUP_WATCHDOG_L1_MIN_ETH || '0.2' }}
           WATCHDOG_L1_TARGET_ETH: ${{ vars.TOPUP_WATCHDOG_L1_TARGET_ETH || '0.5' }}
           WATCHDOG_L2_MIN_ETH: ${{ vars.TOPUP_WATCHDOG_L2_MIN_ETH || '0.5' }}

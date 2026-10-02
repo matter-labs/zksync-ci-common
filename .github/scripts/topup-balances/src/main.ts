@@ -4,8 +4,8 @@
  */
 import type { JsonRpcProvider } from 'ethers';
 
-import { ProviderPool, createProvider, inspectChainOnL1, type Bridgehub } from './chain.ts';
-import { isDryRun, loadConfig, type Config, type Thresholds } from './config.ts';
+import { ProviderPool, createProvider, inspectChainOnL1, readBaseToken, type BaseToken, type Bridgehub } from './chain.ts';
+import { inBaseToken, isDryRun, loadConfig, operatorThresholds, type Config, type Thresholds } from './config.ts';
 import { eth } from './format.ts';
 import { Funder, FundingError } from './funding.ts';
 import {
@@ -37,6 +37,10 @@ interface Target extends BalanceRead {
   /** Chain the balance lives on: the settlement layer for operators, L1 or the chain itself for the watchdog. */
   chainId: bigint;
   thresholds: Thresholds;
+  /** Unit of the balance and thresholds: ETH (default), or a custom base token on L2. */
+  unit?: string;
+  /** How the thresholds were derived, when not taken from the configuration as is. */
+  thresholdNote?: string;
   /** L1 Bridgehub of the chain's ecosystem, used for L2 deposits. */
   bridgehub: Bridgehub;
 }
@@ -100,9 +104,10 @@ class Run {
     }
 
     const { bridgehub, bridgehubAddress, settlementLayer } = inspection;
+    const stack = data.isZkSyncOs === true ? 'ZKsync OS' : data.isZkSyncOs === false ? 'EraVM' : 'stack unknown';
     log.info();
     log.info(
-      `=== ${chain.chain} (${chain.ecosystem}, chain ${chainId}): diamond proxy ${diamondProxy}, ` +
+      `=== ${chain.chain} (${chain.ecosystem}, chain ${chainId}, ${stack}): diamond proxy ${diamondProxy}, ` +
         `bridgehub ${bridgehubAddress}, settlement layer ${settlementLayer}`,
     );
 
@@ -129,6 +134,7 @@ class Run {
     // cache could make the job fund the same wallet over and over.
     const settlesOnL1 = settlementLayer === this.l1ChainId;
     const settlementRpc = settlesOnL1 ? undefined : l2RpcUrlOf(this.registry, chain.ecosystem, settlementLayer);
+    const operator = operatorThresholds(this.config, data.isZkSyncOs);
     for (const role of OPERATOR_ROLES) {
       const address = resolveOperator(role, chain, data);
       const read = settlesOnL1
@@ -140,7 +146,7 @@ class Run {
         label: `${role} operator`,
         address,
         chainId: settlementLayer,
-        thresholds: this.config.operator,
+        thresholds: operator,
         bridgehub,
       });
     }
@@ -173,15 +179,68 @@ class Run {
       });
       return;
     }
+    const l2 = await this.watchdogL2Thresholds(chain, chainId, bridgehub, diamondProxy);
+    if (!l2) {
+      this.report.rows.push({
+        chain: chain.chain,
+        label: 'watchdog L2',
+        address: watchdog,
+        chainId,
+        min: this.config.watchdogL2.min,
+        action: 'error',
+        details: 'base token ratio unavailable',
+      });
+      return;
+    }
     await this.ensure({
       ...(await this.l2Balance(chain.l2RpcUrl, chainId, watchdog, 'L2')),
       chain: chain.chain,
       label: 'watchdog L2',
       address: watchdog,
       chainId,
-      thresholds: this.config.watchdogL2,
+      ...l2,
       bridgehub,
     });
+  }
+
+  /**
+   * The watchdog's L2 thresholds in the unit its L2 balance is held in. On a custom-base-token
+   * chain the L2 balance, and the gas the watchdog spends from it, are in the base token, so the
+   * ETH thresholds are converted at the ratio the chain prices L2 gas at on L1. Such a balance
+   * cannot be topped up, so being below the converted minimum is reported as an error. Returns
+   * undefined, after reporting why, when the base token or its ratio cannot be read.
+   */
+  private async watchdogL2Thresholds(
+    chain: JarvisChain,
+    chainId: bigint,
+    bridgehub: Bridgehub,
+    diamondProxy: string,
+  ): Promise<Pick<Target, 'thresholds' | 'unit' | 'thresholdNote'> | undefined> {
+    const configured = this.config.watchdogL2;
+    let baseToken: BaseToken;
+    try {
+      baseToken = await readBaseToken(this.l1, bridgehub, chainId, diamondProxy);
+    } catch (err) {
+      this.report.error(
+        `${chain.chain}/watchdog L2: could not read the base token or its conversion ratio from L1 ` +
+          `(${log.errorMessage(err)}); not checked`,
+      );
+      return undefined;
+    }
+    if (baseToken.eth) return { thresholds: configured };
+
+    const { address, symbol, nominator, denominator } = baseToken;
+    const thresholds = inBaseToken(configured, nominator, denominator);
+    const ratio = `${eth((10n ** 18n * nominator) / denominator)} ${symbol}/ETH`;
+    log.info(
+      `${chain.chain}: custom base token ${symbol} (${address}), L1 ratio ${nominator}/${denominator} = ${ratio}; ` +
+        `watchdog L2 min ${eth(thresholds.min)} ${symbol}, target ${eth(thresholds.target)} ${symbol}`,
+    );
+    return {
+      thresholds,
+      unit: symbol,
+      thresholdNote: `min ${eth(configured.min)} ETH at the L1 ratio of ${ratio}`,
+    };
   }
 
   /** Checks that the chain's latest L2 block is recent enough. */
@@ -233,12 +292,13 @@ class Run {
 
   /** Records the target in the report and tops it up when it is below its minimum. */
   private async ensure(target: Target): Promise<void> {
-    const { chain, label, address, chainId, balance, thresholds } = target;
+    const { chain, label, address, chainId, balance, thresholds, unit = 'ETH', thresholdNote } = target;
     if (thresholds.min === 0n) return;
 
     const name = `${chain}/${label}`;
     const row = (action: RowAction, details: string): void => {
-      this.report.rows.push({ chain, label, address: address ?? '?', chainId, balance, min: thresholds.min, action, details });
+      const text = [details, thresholdNote].filter(Boolean).join('; ');
+      this.report.rows.push({ chain, label, address: address ?? '?', chainId, balance, min: thresholds.min, action, details: text });
     };
 
     if (!address) {
@@ -261,15 +321,15 @@ class Run {
     }
 
     if (balance >= thresholds.min) {
-      log.info(`${name}: ${address} on chain ${chainId} has ${eth(balance)} ETH (${target.source}), min ${eth(thresholds.min)} ETH, ok`);
+      log.info(`${name}: ${address} on chain ${chainId} has ${eth(balance)} ${unit} (${target.source}), min ${eth(thresholds.min)} ${unit}, ok`);
       row('ok', '');
       return;
     }
 
     const amount = thresholds.target - balance;
     log.info(
-      `${name}: ${address} on chain ${chainId} has ${eth(balance)} ETH (${target.source}), BELOW min ${eth(thresholds.min)} ETH; ` +
-        `topping up by ${eth(amount)} ETH to reach ${eth(thresholds.target)} ETH`,
+      `${name}: ${address} on chain ${chainId} has ${eth(balance)} ${unit} (${target.source}), BELOW min ${eth(thresholds.min)} ${unit}; ` +
+        `topping up by ${eth(amount)} ${unit} to reach ${eth(thresholds.target)} ${unit}`,
     );
     if (this.funder.haltReason) {
       log.info(`  -> skipped: ${this.funder.haltReason}`);
@@ -311,7 +371,8 @@ async function run(config: Config, report: Report, l1: JsonRpcProvider, provider
   log.info(`Funder:            ${funder.address} (${eth(startBalance)} ETH)`);
   log.info(`L1 RPC chain ID:   ${config.l1ChainId}`);
   log.info(`Dry run:           ${config.dryRun}${funder.sendsTransactions ? '' : ' (no transaction will be signed)'}`);
-  log.info(`Operator:          min ${eth(config.operator.min)} ETH, target ${eth(config.operator.target)} ETH`);
+  log.info(`Operator:          min ${eth(config.operator.min)} ETH, target ${eth(config.operator.target)} ETH (ZKsync OS)`);
+  log.info(`EraVM operator:    min ${eth(config.eravmOperator.min)} ETH, target ${eth(config.eravmOperator.target)} ETH`);
   log.info(`Watchdog L1:       min ${eth(config.watchdogL1.min)} ETH, target ${eth(config.watchdogL1.target)} ETH`);
   log.info(`Watchdog L2:       min ${eth(config.watchdogL2.min)} ETH, target ${eth(config.watchdogL2.target)} ETH`);
   log.info(
