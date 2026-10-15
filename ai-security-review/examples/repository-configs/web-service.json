@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "profiles": ["domains/authorization", "domains/privacy-data-exposure"],
+  "context": [".github/security-review-focus.md"],
+  "pathProfiles": [
+    {
+      "paths": ["apps/api/**"],
+      "profiles": ["domains/http-service"]
+    },
+    {
+      "paths": ["apps/web/**"],
+      "profiles": ["domains/web-client"]
+    }
+  ]
+}

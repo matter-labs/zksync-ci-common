@@ -1,0 +1,66 @@
+name: Prepare AI security review
+description: Build a complete, profile-aware review plan from a local pull request diff
+
+inputs:
+  base_sha:
+    description: Full pull request base commit SHA
+    required: true
+  head_sha:
+    description: Full pull request head commit SHA
+    required: true
+  repository:
+    description: Repository in owner/name form
+    required: true
+  output_directory:
+    description: Directory in which to create the review plan
+    required: true
+  pull_request_title:
+    description: Pull request title, included in prompts as untrusted metadata
+    required: false
+    default: ""
+  maximum_unit_bytes:
+    description: Maximum target size for one patch unit
+    required: false
+    default: "80000"
+  maximum_batch_bytes:
+    description: Maximum target size for one model review batch
+    required: false
+    default: "160000"
+  maximum_batches:
+    description: Maximum model review batches before failing visibly
+    required: false
+    default: "24"
+outputs:
+  matrix:
+    description: JSON array of batch identifiers
+    value: ${{ steps.prepare.outputs.matrix }}
+  has_batches:
+    description: Whether the diff contains eligible review units
+    value: ${{ steps.prepare.outputs.has_batches }}
+  batch_count:
+    description: Number of model review batches
+    value: ${{ steps.prepare.outputs.batch_count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install pinned lockfile parsers without lifecycle scripts
+      shell: bash
+      working-directory: ${{ github.action_path }}/../..
+      run: npm ci --prefix . --workspaces=false --ignore-scripts --no-audit --no-fund
+
+    - name: Prepare review plan
+      id: prepare
+      shell: bash
+      env:
+        BASE_SHA: ${{ inputs.base_sha }}
+        ENGINE_ROOT: ${{ github.action_path }}/../..
+        HEAD_SHA: ${{ inputs.head_sha }}
+        MAXIMUM_BATCH_BYTES: ${{ inputs.maximum_batch_bytes }}
+        MAXIMUM_BATCHES: ${{ inputs.maximum_batches }}
+        MAXIMUM_UNIT_BYTES: ${{ inputs.maximum_unit_bytes }}
+        OUTPUT_DIRECTORY: ${{ inputs.output_directory }}
+        PULL_REQUEST_TITLE: ${{ inputs.pull_request_title }}
+        REPOSITORY: ${{ inputs.repository }}
+        TARGET_DIRECTORY: ${{ github.workspace }}
+      run: node "$ENGINE_ROOT/scripts/prepare.mjs"

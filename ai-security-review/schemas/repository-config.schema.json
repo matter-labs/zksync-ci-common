@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Structural configuration contract. Runtime validation also checks profile existence, safe paths, supported globs and canonical source URLs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": { "const": 1 },
+    "profiles": {
+      "type": "array",
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^(languages|domains)/[a-z0-9-]+$" }
+    },
+    "context": {
+      "type": "array",
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+    },
+    "allowedLockfileHosts": {
+      "type": "array",
+      "maxItems": 30,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "format": "hostname",
+        "maxLength": 253,
+        "pattern": "^[a-z0-9-]+\\.[a-z0-9.-]+$"
+      }
+    },
+    "allowedLockfileSources": {
+      "type": "array",
+      "maxItems": 50,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "format": "uri",
+        "maxLength": 2048,
+        "description": "Canonical HTTPS repository URL without credentials, query, fragment, trailing slash or .git suffix. Runtime also checks URL normalization.",
+        "pattern": "^https://[^/?#@]+/[^?#]+$",
+        "not": { "pattern": "(?:\\.git|/)$" }
+      }
+    },
+    "groupRoots": {
+      "type": "array",
+      "maxItems": 50,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+    },
+    "pathProfiles": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["paths", "profiles"],
+        "properties": {
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+          },
+          "profiles": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^(languages|domains)/[a-z0-9-]+$" }
+          }
+        }
+      }
+    }
+  }
+}

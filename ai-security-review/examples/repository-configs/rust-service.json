@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "profiles": ["domains/distributed-system", "domains/protocol-state-transition"],
+  "context": [".github/security-review-focus.md"],
+  "pathProfiles": [
+    {
+      "paths": ["crates/rpc/**"],
+      "profiles": ["domains/http-service"]
+    },
+    {
+      "paths": ["crates/crypto/**"],
+      "profiles": ["domains/cryptography"]
+    }
+  ]
+}

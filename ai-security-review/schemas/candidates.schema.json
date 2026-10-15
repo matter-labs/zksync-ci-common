@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["unit_reviews", "findings"],
+  "properties": {
+    "unit_reviews": {
+      "type": "array",
+      "maxItems": 200,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["unit_id", "status", "summary", "evidence_line"],
+        "properties": {
+          "unit_id": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "status": { "enum": ["CLEAN", "FINDING"] },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 600 },
+          "evidence_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "A source line or anchor within the unit changed_line_ranges (inclusive). Do not use the line numbers displayed by Read for the generated patch or dependency-context file."
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "unit_id",
+          "file",
+          "line",
+          "severity",
+          "confidence",
+          "title",
+          "evidence",
+          "description",
+          "attack_scenario",
+          "impact",
+          "remediation"
+        ],
+        "properties": {
+          "unit_id": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "file": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The source line or anchor supporting this finding, within the referenced unit changed_line_ranges (inclusive). Not a line number in the generated patch or context file."
+          },
+          "severity": { "enum": ["HIGH", "MEDIUM", "LOW"] },
+          "confidence": { "enum": ["HIGH", "MEDIUM", "LOW"] },
+          "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "evidence": { "type": "string", "minLength": 1, "maxLength": 1200 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "attack_scenario": { "type": "string", "minLength": 1, "maxLength": 1600 },
+          "impact": { "type": "string", "minLength": 1, "maxLength": 1200 },
+          "remediation": { "type": "string", "minLength": 1, "maxLength": 1200 }
+        }
+      }
+    }
+  }
+}

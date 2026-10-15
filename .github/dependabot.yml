@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /ai-security-review
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /ai-security-review/actions/review
+      - /ai-security-review/actions/verify
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

@@ -1,0 +1,4 @@
+/ai-security-review/ @matter-labs/devops
+/.github/workflows/ai-security-review*.yaml @matter-labs/devops
+/.github/dependabot.yml @matter-labs/devops
+/.github/CODEOWNERS @matter-labs/devops
