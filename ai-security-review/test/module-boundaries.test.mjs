@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { batch, candidateOutput } from "./candidate-fixture.mjs";
+import { parse } from "yaml";
 
 function isolatedEngine(t, includeSchemas = false) {
   const root = mkdtempSync(path.join(tmpdir(), "ai-review-modules-"));
@@ -24,6 +25,55 @@ function runModules(root, source) {
   });
   assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
 }
+
+test("every credentialed entrypoint's static import graph excludes external packages", (t) => {
+  const root = isolatedEngine(t);
+  const entrypoints = new Set();
+  for (const action of ["review", "verify"]) {
+    const definition = parse(readFileSync(new URL(`../actions/${action}/action.yml`, import.meta.url), "utf8"));
+    for (const step of definition.runs.steps) {
+      for (const match of (step.run ?? "").matchAll(/\$ENGINE_ROOT\/scripts\/([a-z-]+\.mjs)/gu))
+        entrypoints.add(match[1]);
+    }
+  }
+  assert.equal(entrypoints.size, 7);
+  const source = `
+    import assert from "node:assert/strict";
+    import { readFileSync } from "node:fs";
+    import { isBuiltin } from "node:module";
+    import { SourceTextModule } from "node:vm";
+    import path from "node:path";
+    const root = path.resolve("scripts");
+    const pending = ${JSON.stringify([...entrypoints])}.map(name => path.join(root, name));
+    const visited = new Set();
+    while (pending.length) {
+      const file = pending.pop();
+      if (visited.has(file)) continue;
+      visited.add(file);
+      const module = new SourceTextModule(readFileSync(file, "utf8"));
+      for (const specifier of module.dependencySpecifiers) {
+        if (specifier.startsWith("node:") && isBuiltin(specifier)) continue;
+        assert(specifier.startsWith("./") || specifier.startsWith("../"), "external import: " + specifier);
+        const target = path.resolve(path.dirname(file), specifier);
+        assert(target.startsWith(root + path.sep), "import leaves engine scripts");
+        pending.push(target);
+      }
+    }
+  `;
+  const run = () =>
+    spawnSync(process.execPath, ["--experimental-vm-modules", "--input-type=module", "--eval", source], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 10_000
+    });
+  const clean = run();
+  assert.equal(clean.status, 0, `${clean.error ?? ""}\n${clean.stderr}`);
+  const renderer = path.join(root, "scripts/rendering.mjs");
+  writeFileSync(renderer, `import "yaml";\n${readFileSync(renderer, "utf8")}`);
+  const unsafe = run();
+  assert.equal(unsafe.status, 1, unsafe.stderr);
+  assert.match(unsafe.stderr, /external import: yaml/u);
+});
 
 test("globs, paths, redaction, rendering and lockfile policy work without schemas or parser packages", (t) => {
   const root = isolatedEngine(t);

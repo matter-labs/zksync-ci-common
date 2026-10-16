@@ -17,18 +17,19 @@ Set these under the reusable job's `with` block:
 These settings live in the reusable workflow's top-level `env`. Callers cannot override them through their own
 environment variables. Change the engine, review the revision, then update consumer pins.
 
-| Setting                                      | Current value                  | Meaning                                   |
-| -------------------------------------------- | ------------------------------ | ----------------------------------------- |
-| `AI_SECURITY_REVIEW_MODEL`                   | `claude-opus-4-8`              | Reviewer and verifier model.              |
-| `AI_SECURITY_REVIEW_EFFORT`                  | `high`                         | Model effort.                             |
-| `AI_SECURITY_REVIEW_REVIEW_MAX_BUDGET_USD`   | `20`                           | USD per reviewer batch.                   |
-| `AI_SECURITY_REVIEW_VERIFY_MAX_BUDGET_USD`   | `20`                           | USD per verifier session.                 |
-| `AI_SECURITY_REVIEW_MAXIMUM_UNIT_BYTES`      | `80000`                        | Maximum patch-unit bytes.                 |
-| `AI_SECURITY_REVIEW_MAXIMUM_BATCH_BYTES`     | `160000`                       | Maximum batch bytes.                      |
-| `CLAUDE_CLI_VERSION`                         | `2.1.296`                      | Integrity-pinned native CLI.              |
-| `AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS` | `7`                            | Days retained for every engine artifact.  |
-| `AI_SECURITY_REVIEW_ENGINE_REPOSITORY`       | `matter-labs/zksync-ci-common` | Expected reusable workflow repository.    |
-| `AI_SECURITY_REVIEW_OIDC_AUDIENCE`           | `https://api.anthropic.com`    | Audience used when obtaining OIDC tokens. |
+| Setting                                      | Current value                  | Meaning                                                     |
+| -------------------------------------------- | ------------------------------ | ----------------------------------------------------------- |
+| `NODE_VERSION`                               | `22`                           | Node.js major used by every engine job and the base action. |
+| `AI_SECURITY_REVIEW_MODEL`                   | `claude-opus-4-8`              | Reviewer and verifier model.                                |
+| `AI_SECURITY_REVIEW_EFFORT`                  | `high`                         | Model effort.                                               |
+| `AI_SECURITY_REVIEW_REVIEW_MAX_BUDGET_USD`   | `20`                           | USD per reviewer batch.                                     |
+| `AI_SECURITY_REVIEW_VERIFY_MAX_BUDGET_USD`   | `20`                           | USD per verifier session.                                   |
+| `AI_SECURITY_REVIEW_MAXIMUM_UNIT_BYTES`      | `80000`                        | Maximum patch-unit bytes.                                   |
+| `AI_SECURITY_REVIEW_MAXIMUM_BATCH_BYTES`     | `160000`                       | Maximum batch bytes.                                        |
+| `CLAUDE_CLI_VERSION`                         | `2.1.296`                      | Integrity-pinned native CLI.                                |
+| `AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS` | `7`                            | Days retained for every engine artifact.                    |
+| `AI_SECURITY_REVIEW_ENGINE_REPOSITORY`       | `matter-labs/zksync-ci-common` | Expected reusable workflow repository.                      |
+| `AI_SECURITY_REVIEW_OIDC_AUDIENCE`           | `https://api.anthropic.com`    | Audience used when obtaining OIDC tokens.                   |
 
 `CLAUDE_CLI_URL` and `CLAUDE_CLI_INTEGRITY` are paired with the version in the
 [workflow](../../.github/workflows/ai-security-review.yaml); change all three together.
@@ -197,8 +198,13 @@ session budget does not constrain use of a credential outside the engine.
 ## Approve Dependency Sources
 
 Use `allowedLockfileHosts` for approved private package registries. Use `allowedLockfileSources` for exact repository
-origins using the `https://github.com/owner/repository` form. Add either value to the base branch in a separate reviewed
+origins using the `https://host/owner/repository` form. Add either value to the base branch in a separate reviewed
 change. An unchanged source binding remains accepted, but base-lockfile hosts and origins do not authorize new bindings.
+
+For example, an npm `gitlab:team/library#revision` or `https://gitlab.com/team/library#revision` source needs
+`https://gitlab.com/team/library` in `allowedLockfileSources`; approving the `gitlab.com` host is insufficient. Composer
+mirrors need the same host or repository approval as their transport requires. Unsupported mirror templates fail
+preparation and cannot be enabled by a broader allowlist.
 
 A label cannot approve a source. Use host approvals for registries and repository approvals for Git or GitHub archives;
 approving a host does not authorize all repositories there. See the

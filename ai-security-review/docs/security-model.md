@@ -39,8 +39,9 @@ does not make an editable consumer caller trustworthy. See
 [caller protection](required-review.md#protect-caller-changes) and [credential controls](authentication.md).
 
 Every engine checkout uses the expected repository identity and `job.workflow_sha`, the server-resolved commit defining
-the job. Each job rejects an unexpected repository or invalid SHA. Preparation also checks the engine checkout before
-reviewer or verifier jobs can obtain credentials.
+the job. Each job rejects an unexpected repository or invalid SHA, then compares the engine checkout's actual HEAD with
+that SHA before executing engine code. This is a checkout-integrity check; OIDC permission is granted at job level and
+is not withheld by the comparison step.
 
 When called for a fork PR, the engine skips plan preparation, review, verification, and publishing; completion fails as
 unsupported. The uncredentialed CLI download still runs. GitHub normally withholds secrets from fork runs except a
@@ -59,6 +60,11 @@ file writes, agents, and network tools. Repository customizations remain disable
 and the central engine, including symlinked access. Only source, plan, and required verification directories receive
 additional read access. Credential files remain outside those roots. Prompts identify the absolute source checkout
 because the session directory contains no repository files.
+
+The engine checkout currently sits inside the source checkout. Credentialed engine entrypoints and their transitive
+static imports use only local modules and Node built-ins; CI checks that complete graph. This avoids resolving parser
+packages from ancestor `node_modules`, but is not filesystem isolation. Moving the checkouts to sibling directories and
+revalidating all paths remains a hardening follow-up.
 
 ## Coverage and Structured Output
 
@@ -104,9 +110,10 @@ settings are not prohibited when the forced diff and independent coverage check 
 ## Dependency Source Policy
 
 Source policy checks changed, recognized source bindings against approved hosts and exact repository origins. Unchanged
-bindings remain accepted but do not authorize new bindings elsewhere.
-[Source approvals](configuration.md#approve-dependency-sources) must land on the base branch in a separate reviewed
-change.
+bindings remain accepted but do not authorize new bindings elsewhere. Cargo, Poetry, uv, and Composer bindings include
+package identity; separate Composer and Poetry source revision fields are also compared. Reordering package arrays alone
+does not create new bindings. [Source approvals](configuration.md#approve-dependency-sources) must land on the base
+branch in a separate reviewed change.
 
 Git sources require exact repository approval, including sources on otherwise approved registry hosts. Public Git SSH
 URLs may use the transport username `git`; passwords and other usernames remain rejected. HTTPS URLs cannot contain
@@ -115,9 +122,23 @@ credentials. GitHub archive URLs on `github.com`, `api.github.com`, `codeload.gi
 cannot bypass that check. Opaque GitHub asset URLs cannot establish a repository origin and fail closed. GitHub URLs
 with encoded paths or nonstandard ports also fail closed.
 
-Both `registry.npmjs.org` and `registry.yarnpkg.com` require standard HTTPS. For `package-lock.json`, `pnpm-lock.yaml`,
-`bun.lock`, and Yarn Classic, recognized package identities must match the tarball's package path. Identity comes from
-lockfile declarations, never the download URL. Declared aliases use the resolved target name, not the installed alias.
+npm-family lockfiles use npm's `hosted-git-info` parser for recognized hosted Git URLs and shorthands such as
+`gitlab:owner/repository` and `github:owner/repository`. A GitLab HTTPS repository URL needs exact repository approval
+even without a `.git` suffix; an arbitrary HTTPS archive ending in `.git` is not automatically Git. Hosted Git parsing
+is bounded to 4,096 characters; oversized known hosted references fail preparation instead of inheriting a host
+approval.
+
+Composer `source.mirrors` and `dist.mirrors` are checked alongside primary URLs, using their parent's transport type and
+revision. Supported mirrors use absolute network URLs with `git`, `zip`, or `tar` types. Templates, percent-encoded
+mirror URLs, local paths, and unsupported forms fail preparation; expand templates to concrete URLs before adopting this
+check.
+
+Both `registry.npmjs.org` and `registry.yarnpkg.com` require standard HTTPS. For `package-lock.json`,
+`npm-shrinkwrap.json`, `pnpm-lock.yaml`, `bun.lock`, and Yarn Classic, recognized package identities must match the
+tarball's package path. Identity comes from lockfile declarations, never the download URL. Declared aliases use the
+resolved target name, not the installed alias. Changed explicit `npm:` alias targets receive
+`reviewNotice: "alias-target-change"` and remain unclassified, even when their tarball matches the declared target. This
+is a human-review signal; registry or trusted-manifest validation of alias intent remains outside the engine's checks.
 
 AI review cannot override deterministic policy violations. Unclassified records alone neither fail the workflow nor
 establish a vulnerability or source approval. They remain in `result.json` and produce a human-review notice even when
@@ -138,16 +159,19 @@ The canonical Cargo registry source `registry+https://github.com/rust-lang/crate
 registry, not as blanket GitHub trust.
 
 Lockfile validation decodes JSON, JSONC, YAML, TOML, and Yarn Classic sources before applying policy. Bundler remote
-entries and Go checksum files use format-specific readers. Unsupported or malformed formats fail without a raw-text
-fallback. The preparation job installs integrity-pinned parsers with lifecycle scripts disabled. Reviewer and verifier
-jobs do not install these dependencies.
+entries (`Gemfile.lock` and `gems.locked`) and Go checksum files use format-specific readers. `npm-shrinkwrap.json` uses
+the npm reader throughout detection, source policy, and dependency context. JSON and JSONC reject duplicate decoded
+keys, including nested and escaped keys, with bounded depth and record counts. Unsupported or malformed formats fail
+without a raw-text fallback. The preparation job installs integrity-pinned production parsers with lifecycle scripts
+disabled; test-only dependencies are omitted. Reviewer and verifier jobs do not install these dependencies.
 
 Preparation records changed dependency entries and unmodeled lockfile sections in the manifest's `dependency_changes`.
 Each record carries its location, package name when known, classification, and bounded before/after summaries. Entries
 without a recognized primary source or required package identity receive `reason: "unclassified"`, including
-dependencies that omit URLs or use implicit registries. Covered residue includes Yarn `github:`, `exec:`, and `patch:`
-locators, pnpm and Bun aliases, structured Nix inputs, Go checksums, and local archive references. Changed selectors and
-format controls also receive records. Lockfile moves between packages retain review context.
+dependencies that omit URLs or use implicit registries. Covered residue includes unsupported compound Yarn Git
+selectors, `exec:`, and `patch:` locators, pnpm and Bun aliases, structured Nix inputs, Go checksums, and local archive
+references. Changed selectors and format controls also receive records. Lockfile moves between packages retain review
+context.
 
 Dedicated `dependency-context` units deliver these records to the `domains/ci-supply-chain` reviewer alongside the
 original patch units. Summaries redact known secret patterns and omit URL credentials, queries, and fragments. Large
@@ -160,8 +184,15 @@ records to their review units and original patches.
 
 ## Claude CLI Supply Chain
 
+Every engine job explicitly sets up the central Node.js major version before running scripts. The same setting reaches
+the base action, avoiding its Node 18 fallback. Machine ordering uses UTF-16 code-unit comparisons, so differing ICU
+versions cannot reorder findings between finalization and publication.
+
 The workflow pins Anthropic's base action for authentication and SDK execution, but an action pin alone would not pin
-bytes downloaded by its default mutable installer. The engine supplies its own verified executable instead.
+bytes downloaded by its default mutable installer. The engine supplies its own verified Claude executable instead. This
+verification does not cover Bun or the launcher's npm dependency graph: the pinned base action still uses `setup-bun`
+and `bun install --production` without `--frozen-lockfile`. Independently verifying that tooling remains a follow-up; do
+not interpret the Claude digest check as verification of the entire execution environment.
 
 `prepare_cli` downloads the configured native Linux x64 tarball, verifies its SHA-512 digest, and checks `--version` and
 `--help`. It has no repository permissions, OIDC minting permission, or Anthropic credentials. It uploads the unchanged

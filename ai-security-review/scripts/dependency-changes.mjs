@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import path from "node:path";
+import { compareStrings } from "./ordering.mjs";
+import { canonicalLockfileName } from "./repository-paths.mjs";
+import { aliasTargets } from "./lockfile-aliases.mjs";
 import { redactSecretMaterial } from "./redaction.mjs";
 
 const MAX_SUMMARY_BYTES = 1_500;
@@ -110,6 +112,12 @@ function sourcePaths(filename, value, location) {
         : [];
     if (!keys.length || keys.some((key) => !explicitReference(source[key]))) return [];
     paths.push(...keys.map((key) => [...location, field, key]));
+    if (filename === "composer.lock") {
+      for (const [index, mirror] of (source.mirrors ?? []).entries()) {
+        if (!explicitReference(mirror.url)) return [];
+        paths.push([...location, field, "mirrors", String(index), "url"]);
+      }
+    }
   }
   return paths;
 }
@@ -126,7 +134,13 @@ function entriesFor(state, filename) {
   const recognized = new Set(sources.filter((source) => !source.identityUnclassified).map((source) => source.location));
   const add = (location, value, name = null, modeled = false) => {
     const key = JSON.stringify(location);
-    entries.set(key, { location: key, packageName: name, serialized: encode(value), modeled });
+    entries.set(key, {
+      location: key,
+      packageName: name,
+      serialized: encode(value),
+      modeled,
+      aliases: aliasTargets(filename, location, value)
+    });
   };
   const addPackage = (location, value, name) => {
     const paths = sourcePaths(filename, value, location);
@@ -147,7 +161,7 @@ function entriesFor(state, filename) {
     for (const [name, versions] of modules)
       add(
         ["modules", name],
-        versions.sort((a, b) => encode(a).localeCompare(encode(b))),
+        versions.sort((a, b) => compareStrings(encode(a), encode(b))),
         name
       );
     return entries;
@@ -179,7 +193,7 @@ function entriesFor(state, filename) {
       for (const [name, variants] of packages) {
         add(
           [field, name],
-          variants.map((entry) => entry.value).sort((a, b) => encode(a).localeCompare(encode(b))),
+          variants.map((entry) => entry.value).sort((a, b) => compareStrings(encode(a), encode(b))),
           name,
           variants.every((entry) => entry.modeled)
         );
@@ -194,14 +208,15 @@ function entriesFor(state, filename) {
 }
 
 export function changedDependencyEntries(filePath, baseFilePath, base, head) {
-  const before = entriesFor(base, path.posix.basename(baseFilePath));
-  const after = entriesFor(head, path.posix.basename(filePath));
+  const before = entriesFor(base, canonicalLockfileName(baseFilePath));
+  const after = entriesFor(head, canonicalLockfileName(filePath));
   const changes = [];
   for (const key of [...new Set([...before.keys(), ...after.keys()])].sort()) {
     const previous = before.get(key);
     const current = after.get(key);
     if (filePath === baseFilePath && previous?.serialized === current?.serialized) continue;
     const entry = current ?? previous;
+    const aliasChanged = current && (previous?.aliases ?? "[]") !== current.aliases;
     changes.push({
       id: digest(`${filePath}\n${key}`),
       file: filePath,
@@ -209,7 +224,8 @@ export function changedDependencyEntries(filePath, baseFilePath, base, head) {
       location: safeLabel(entry.location),
       packageName: safeLabel(entry.packageName),
       change: !previous ? "added" : !current ? "removed" : "modified",
-      reason: entry.modeled ? "recognized-source" : "unclassified",
+      reason: entry.modeled && !aliasChanged ? "recognized-source" : "unclassified",
+      ...(aliasChanged ? { reviewNotice: "alias-target-change" } : {}),
       before: summary(previous?.serialized),
       after: summary(current?.serialized)
     });

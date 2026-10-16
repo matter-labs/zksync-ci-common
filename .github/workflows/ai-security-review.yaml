@@ -21,6 +21,8 @@ on:
 permissions: {}
 
 env:
+  NODE_VERSION: "22"
+
   # Model
   AI_SECURITY_REVIEW_MODEL: claude-opus-4-8
   AI_SECURITY_REVIEW_EFFORT: high
@@ -52,6 +54,12 @@ jobs:
     timeout-minutes: 10
     permissions: {}
     steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
       - name: Download and verify Claude CLI
         env:
           CLAUDE_DIRECTORY: ${{ runner.temp }}/claude-code
@@ -98,6 +106,12 @@ jobs:
       has_batches: ${{ steps.prepare.outputs.has_batches }}
       matrix: ${{ steps.prepare.outputs.matrix }}
     steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
       - name: Checkout pull request head
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -180,6 +194,12 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
       - name: Checkout pull request head
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -212,6 +232,18 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .ai-security-review-engine
           persist-credentials: false
+
+      - name: Verify review engine revision
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git -C .ai-security-review-engine rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Review engine checkout does not match the workflow SHA"
+            exit 1
+          fi
 
       - name: Download review plan
         id: plan_artifact
@@ -299,6 +331,12 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
       - name: Checkout pull request head
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -331,6 +369,18 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .ai-security-review-engine
           persist-credentials: false
+
+      - name: Verify review engine revision
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git -C .ai-security-review-engine rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Review engine checkout does not match the workflow SHA"
+            exit 1
+          fi
 
       - name: Download review plan
         id: plan_artifact
@@ -450,6 +500,12 @@ jobs:
       contents: read
       pull-requests: write
     steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
       - name: Validate review workflow identity
         shell: bash
         env:
@@ -475,6 +531,18 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .ai-security-review-engine
           persist-credentials: false
+
+      - name: Verify review engine revision
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git -C .ai-security-review-engine rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Review engine checkout does not match the workflow SHA"
+            exit 1
+          fi
 
       - name: Download complete review result
         id: download
@@ -503,6 +571,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
       - name: Validate review workflow identity
         shell: bash
         env:
@@ -528,6 +602,18 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .ai-security-review-engine
           persist-credentials: false
+
+      - name: Verify review engine revision
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git -C .ai-security-review-engine rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Review engine checkout does not match the workflow SHA"
+            exit 1
+          fi
 
       - name: Assert review completed
         env:

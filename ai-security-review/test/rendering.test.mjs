@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Parser } from "commonmark";
 import { renderPlanPrompt, renderComment } from "../scripts/rendering.mjs";
 import { validateCandidateOutput } from "../scripts/review-results.mjs";
 import { batch, candidateOutput, commentBoundaryOutput } from "./candidate-fixture.mjs";
@@ -130,5 +131,56 @@ test("comment rendering breaks autolinked URLs", () => {
   const comment = renderComment({ findings: [{ ...candidate, verification: { reason: "confirmed" } }] });
   assert.doesNotMatch(comment, /https:\/\/evil/u);
   assert.doesNotMatch(comment, /www\.evil/u);
-  assert.match(comment, /https:&#8203;\/\/evil\.example/u);
+  assert.match(comment, /https:&#8203;\/&#8203;\/evil\.example/u);
+});
+
+test("untrusted comment fields cannot introduce Markdown links or images", () => {
+  const [candidate] = validateCandidateOutput(candidateOutput(), batch);
+  const runUrl = "https://github.com/example/repo/actions/runs/123";
+  const payloads = [
+    String.raw`\[x\](//evil.example/path)`,
+    String.raw`\[x\](/relative)`,
+    String.raw`\![x\](//evil.example/image)`,
+    "[x](//evil.example/path)",
+    "<https://evil.example/path>",
+    "<a href='//evil.example'>link</a>",
+    "&#91;x&#93;(//evil.example/path)",
+    "`[x](//evil.example/path)`",
+    ...Array.from({ length: 8 }, (_, index) => "\\".repeat(index) + "[x](//evil.example/path)")
+  ];
+  for (const field of [
+    "title",
+    "file",
+    "fingerprint",
+    "description",
+    "evidence",
+    "attack_scenario",
+    "impact",
+    "remediation"
+  ]) {
+    for (const payload of payloads) {
+      const comment = renderComment({ findings: [{ ...candidate, [field]: payload }], run_url: runUrl });
+      const walker = new Parser().parse(comment).walker();
+      const destinations = [];
+      for (let event; (event = walker.next()); ) {
+        if (!event.entering) continue;
+        if (["link", "image"].includes(event.node.type)) destinations.push(event.node.destination);
+        if (event.node.type === "html_inline") assert.ok(!event.node.literal.includes("evil.example"));
+      }
+      assert.deepEqual(destinations, [runUrl], `${field}: ${payload}`);
+    }
+  }
+});
+
+test("finding order is independent of ICU and retains severity and numeric line priorities", () => {
+  const [candidate] = validateCandidateOutput(candidateOutput(), batch);
+  const findings = [
+    { ...candidate, file: "src/\u044f.ts", line: 10, title: "Third" },
+    { ...candidate, file: "src/\u1c89.ts", line: 1, title: "Fourth" },
+    { ...candidate, file: "src/\u044f.ts", line: 2, title: "Second" },
+    { ...candidate, file: "src/a.ts", severity: "MEDIUM", title: "Fifth" },
+    { ...candidate, file: "src/a.ts", title: "First" }
+  ];
+  const titles = [...renderComment({ findings }).matchAll(/^### (?:HIGH|MEDIUM): (.+)$/gmu)].map((match) => match[1]);
+  assert.deepEqual(titles, ["First", "Second", "Third", "Fourth", "Fifth"]);
 });

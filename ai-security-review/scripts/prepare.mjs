@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { compareStrings } from "./ordering.mjs";
 import { assertGitlinkCoverage, changedGitlinks, gitlinks } from "./submodules.mjs";
 import { loadProfileText, orderedProfiles, profilesForPath } from "./profiles.mjs";
 import { sanitizeUntrustedText } from "./redaction.mjs";
@@ -206,7 +207,7 @@ function changedFiles() {
       index += 2;
     }
   }
-  return files.sort((left, right) => left.path.localeCompare(right.path));
+  return files.sort((left, right) => compareStrings(left.path, right.path));
 }
 
 function pathspec(file) {

@@ -1,3 +1,4 @@
+import { compareStrings } from "./ordering.mjs";
 const IMPORT_SIGNALS = [
   { id: "crypto-library", modules: ["crypto", "node:crypto"], profiles: ["domains/cryptography"] },
   { id: "jwt-library", modules: ["jose", "jsonwebtoken"], profiles: ["domains/authorization", "domains/cryptography"] },
@@ -84,7 +85,7 @@ export function contentProfileSignals(text) {
     firstLine += newlineCount(text, start, Math.min(text.length, nextStart));
   }
   return [...found.values()]
-    .sort((left, right) => left.id.localeCompare(right.id))
+    .sort((left, right) => compareStrings(left.id, right.id))
     .map((signal) => ({ ...signal, profiles: [...signal.profiles] }));
 }
 
@@ -111,7 +112,7 @@ export function patchProfileSignals(chunks, side) {
     }
     record();
   }
-  return [...found.values()].sort((left, right) => left.id.localeCompare(right.id));
+  return [...found.values()].sort((left, right) => compareStrings(left.id, right.id));
 }
 
 export function combinedContentSignals(base, head) {
@@ -126,5 +127,5 @@ export function combinedContentSignals(base, head) {
       combined.set(signal.id, entry);
     }
   }
-  return [...combined.values()].sort((left, right) => left.id.localeCompare(right.id));
+  return [...combined.values()].sort((left, right) => compareStrings(left.id, right.id));
 }

@@ -75,5 +75,12 @@ export function isKnownBinaryPath(filePath) {
 }
 
 export function isLockfilePath(filePath) {
-  return LOCKFILES.has(path.posix.basename(filePath));
+  return LOCKFILES.has(canonicalLockfileName(filePath));
+}
+
+export function canonicalLockfileName(filePath) {
+  const name = path.posix.basename(filePath);
+  if (name === "npm-shrinkwrap.json") return "package-lock.json";
+  if (name === "gems.locked") return "Gemfile.lock";
+  return name;
 }

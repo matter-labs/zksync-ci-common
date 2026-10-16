@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { compareStrings } from "./ordering.mjs";
 import { assert } from "./assert.mjs";
 import { matchesGlob } from "./globs.mjs";
 import { isLockfilePath } from "./repository-paths.mjs";
@@ -138,7 +139,7 @@ export function orderedProfiles(profiles) {
     if (left === right) return 0;
     if (left === "universal") return -1;
     if (right === "universal") return 1;
-    return left.localeCompare(right);
+    return compareStrings(left, right);
   });
 }
 

@@ -64,7 +64,7 @@ function pythonSourceField(filename, location, parent) {
   return null;
 }
 
-export function lockfileSourceField(filename, location, parent) {
+export function lockfileSourceField(filename, location, parent, document) {
   switch (filename) {
     case "package-lock.json":
       return npmSourceField(location);
@@ -81,12 +81,12 @@ export function lockfileSourceField(filename, location, parent) {
       return location.length === 3 && location[0] === "package" && location[2] === "source" ? "url" : null;
     case "composer.lock":
       if (
-        location.length === 4 &&
         ["packages", "packages-dev"].includes(location[0]) &&
         ["source", "dist"].includes(location[2]) &&
-        location[3] === "url"
+        ((location.length === 4 && location[3] === "url") ||
+          (location.length === 6 && location[3] === "mirrors" && location[5] === "url"))
       )
-        return parent.type === "git" ? "git" : "url";
+        return (document?.[location[0]]?.[location[1]]?.[location[2]] ?? parent).type === "git" ? "git" : "url";
       return null;
     case "flake.lock":
       if (

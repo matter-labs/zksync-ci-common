@@ -1,4 +1,5 @@
 import path from "node:path";
+import { compareStrings } from "./ordering.mjs";
 import { assert } from "./assert.mjs";
 import { assertCommentBody, COMMENT_MARKER, MAX_COMMENT_BYTES } from "./comment-contract.mjs";
 import { redactSecretMaterial } from "./redaction.mjs";
@@ -17,13 +18,15 @@ export function renderPlanPrompt(template, planDirectory, sourceDirectory) {
 
 function safeMarkdownText(value) {
   return redactSecretMaterial(value)
+    .replace(/\\/gu, "\\\\")
     .replace(/&/gu, "&amp;")
     .replace(/</gu, "&lt;")
     .replace(/>/gu, "&gt;")
     .replace(/@/gu, "@&#8203;")
     .replace(/:\/\//gu, ":&#8203;//")
+    .replace(/\/\//gu, "/&#8203;/")
     .replace(/\bwww\./giu, "www&#8203;.")
-    .replace(/[`[\]]/gu, "\\$&")
+    .replace(/[`[\]()!]/gu, "\\$&")
     .replace(/\s+/gu, " ")
     .trim();
 }
@@ -123,7 +126,7 @@ export function renderComment(result) {
   const orderedFindings = [...result.findings].sort((left, right) => {
     return (
       severityOrder[left.severity] - severityOrder[right.severity] ||
-      left.file.localeCompare(right.file) ||
+      compareStrings(left.file, right.file) ||
       left.line - right.line
     );
   });

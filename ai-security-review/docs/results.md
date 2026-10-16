@@ -38,6 +38,11 @@ artifacts without updating a PR comment.
   and fixtures can trigger the heuristic too. These warnings survive a clean model result and do not fail the gate, even
   with `fail_on_findings: true`.
 
+Changed explicit `npm:` alias targets appear as `reviewNotice: "alias-target-change"` in `dependency_changes` and count
+as unclassified records. Check the parent package's trusted manifest and the intended dependency name; a matching
+registry tarball path does not prove the alias was intended. This notice survives a CLEAN review but does not itself
+fail the findings gate.
+
 ## Inspect Artifacts and Diagnostics
 
 Open the Actions run linked in the comment. Artifact names include the run ID:

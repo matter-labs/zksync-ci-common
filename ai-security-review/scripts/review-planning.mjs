@@ -1,4 +1,5 @@
 import path from "node:path";
+import { compareStrings } from "./ordering.mjs";
 import { assert } from "./assert.mjs";
 import { MAX_BATCH_UNITS } from "./review-contract.mjs";
 
@@ -258,7 +259,7 @@ export function packUnitsIntoBatches(units, maximumBatchBytes) {
       bins.push({ units: [...chunk.units], bytes: chunk.bytes });
     }
   }
-  return bins.sort((left, right) => left.units[0].id.localeCompare(right.units[0].id)).map((bin) => bin.units);
+  return bins.sort((left, right) => compareStrings(left.units[0].id, right.units[0].id)).map((bin) => bin.units);
 }
 
 export function reviewerTurnBudget(unitCount, totalBytes = 0) {

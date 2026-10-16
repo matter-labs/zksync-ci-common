@@ -32,8 +32,8 @@ CODEOWNERS is stored on the PR base branch; a new ownership file does not enforc
 
 ## Run Validation
 
-Use Node.js 22, Bun 1.3.14, Git with `--attr-source` support, `jq`, and `tar`. The pinned CLI check requires Linux x64.
-From the repository root:
+Use Node.js 22.22.2 or later in the 22.x line, Bun 1.3.14, Git with `--attr-source` support, `jq`, and `tar`. The pinned
+CLI check requires Linux x64. From the repository root:
 
 ```bash
 npm ci --prefix ai-security-review --workspaces=false --ignore-scripts --no-audit --no-fund
@@ -57,7 +57,9 @@ platform archive and sends dummy requests to a loopback fake API. No paid model 
   action configurations against a loopback fake API with dummy credentials, including denied tools, paths, symlinks, and
   preload/ dotenv isolation.
 - Documentation tests check relative links and anchors, documented workflow settings and input defaults, and
-  configuration examples. The caller tests execute the README's SHA-verification script against a local API fixture.
+  configuration examples. Static import-graph tests traverse every credentialed entrypoint; rendering tests cover
+  backslash payloads and ICU-independent ordering. The caller tests execute the README's SHA-verification script against
+  a local API fixture.
 
 The npm audit fails on Moderate or higher advisories and on audit errors. `BUN_EXECUTABLE` enables launcher regression
 coverage; CI supplies the pinned runtime. Local tests do not execute GitHub's scheduler or prove real provider schema
@@ -66,9 +68,11 @@ acceptance, permissions, federation rules, billing behavior, or retention config
 ## Dependency Updates
 
 Dependabot proposes weekly parser and GitHub Actions updates, including the reviewer and verifier composite actions.
-Parser versions and their lockfile integrity values must remain pinned. Install with lifecycle scripts disabled. Keep
-reviewer and verifier modules independent of parser dependencies; the prepare job is the only model-workflow job that
-installs them.
+Parser versions and their lockfile integrity values must remain pinned. `hosted-git-info` defines npm hosted Git URL
+semantics; rerun source-policy and hostile-input regressions when upgrading it. CommonMark is a test-only dependency
+that checks rendered comments for active links and images; production preparation omits dev dependencies. Install with
+lifecycle scripts disabled. Keep reviewer and verifier modules independent of parser dependencies; the prepare job is
+the only model-workflow job that installs them.
 
 The package's `private: true` setting prevents accidental npm publication; distribution uses the reusable workflow.
 

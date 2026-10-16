@@ -290,3 +290,40 @@ test("workflow identity guards fail closed", () => {
     assert.match(invalidSha.stdout, /Review workflow SHA is missing or invalid/u);
   }
 });
+
+test("every engine job sets up the central Node runtime before running scripts", () => {
+  const workflow = parse(readFileSync(`${repositoryRoot}/.github/workflows/ai-security-review.yaml`, "utf8"));
+  const ci = parse(readFileSync(`${repositoryRoot}/.github/workflows/ai-security-review-ci.yaml`, "utf8"));
+  assert.equal(workflow.env.NODE_VERSION, "22");
+  const ciNode = ci.jobs.test.steps.find((step) => step.uses?.startsWith("actions/setup-node@"));
+  assert.equal(String(ciNode.with["node-version"]), workflow.env.NODE_VERSION);
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    const setup = job.steps[0];
+    assert.equal(setup.uses, ciNode.uses, name);
+    assert.equal(setup.with["node-version"], "${{ env.NODE_VERSION }}", name);
+    assert.equal(setup.with["package-manager-cache"], false, name);
+    assert.equal(job.env?.NODE_VERSION, undefined, name);
+    for (const step of job.steps) assert.equal(step.env?.NODE_VERSION, undefined, name);
+  }
+  const prepare = parse(read("actions/prepare/action.yml"));
+  const install = prepare.runs.steps.find((step) => step.run?.startsWith("npm ci"));
+  assert.match(install.run, /--omit=dev/u);
+  assert.match(install.run, /--ignore-scripts/u);
+});
+
+test("each engine checkout verifies its resolved revision before executing engine code", () => {
+  const workflow = parse(readFileSync(`${repositoryRoot}/.github/workflows/ai-security-review.yaml`, "utf8"));
+  const checks = [];
+  for (const job of Object.values(workflow.jobs)) {
+    const checkoutIndex = job.steps.findIndex((step) => step.name === "Checkout review engine");
+    if (checkoutIndex === -1) continue;
+    const verification = job.steps[checkoutIndex + 1];
+    assert.equal(verification.name, "Verify review engine revision");
+    assert.equal(verification.env.EXPECTED_SHA, "${{ job.workflow_sha }}");
+    assert.match(verification.run, /git -C \.ai-security-review-engine rev-parse HEAD/u);
+    assert.match(verification.run, /exit 1/u);
+    checks.push(verification);
+  }
+  assert.equal(checks.length, 5);
+  for (const check of checks) assert.deepEqual(check, checks[0]);
+});

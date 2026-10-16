@@ -47,7 +47,7 @@ runs:
     - name: Install pinned lockfile parsers without lifecycle scripts
       shell: bash
       working-directory: ${{ github.action_path }}/../..
-      run: npm ci --prefix . --workspaces=false --ignore-scripts --no-audit --no-fund
+      run: npm ci --prefix . --workspaces=false --omit=dev --ignore-scripts --no-audit --no-fund
 
     - name: Prepare review plan
       id: prepare
