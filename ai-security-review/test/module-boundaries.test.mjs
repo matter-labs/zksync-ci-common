@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { isBuiltin } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { batch, candidateOutput } from "./candidate-fixture.mjs";
 import { parse } from "yaml";
+import { init, parse as parseImports } from "es-module-lexer/minimal";
+
+await init();
 
 function isolatedEngine(t, includeSchemas = false) {
   const root = mkdtempSync(path.join(tmpdir(), "ai-review-modules-"));
@@ -26,7 +30,31 @@ function runModules(root, source) {
   assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
 }
 
-test("every credentialed entrypoint's static import graph excludes external packages", (t) => {
+function moduleGraph(root, entrypoints) {
+  const scripts = realpathSync(path.join(root, "scripts"));
+  const pending = entrypoints.map((name) => path.join(scripts, name));
+  const visited = new Set();
+  while (pending.length) {
+    const file = realpathSync(pending.pop());
+    assert.ok(file.startsWith(scripts + path.sep), "import leaves engine scripts");
+    if (visited.has(file)) continue;
+    visited.add(file);
+    const [imports] = parseImports(readFileSync(file, "utf8"), file);
+    for (const entry of imports) {
+      if (entry.d === -2) continue;
+      const specifier = entry.n;
+      assert.equal(typeof specifier, "string", `computed import in ${file}`);
+      if (specifier.startsWith("node:") && isBuiltin(specifier)) continue;
+      assert.ok(specifier.startsWith("./") || specifier.startsWith("../"), `external import: ${specifier}`);
+      const target = path.resolve(path.dirname(file), specifier);
+      assert.ok(target.startsWith(scripts + path.sep), "import leaves engine scripts");
+      pending.push(target);
+    }
+  }
+  return visited;
+}
+
+test("every credentialed entrypoint's static and dynamic import graph excludes external packages", (t) => {
   const root = isolatedEngine(t);
   const entrypoints = new Set();
   for (const action of ["review", "verify"]) {
@@ -37,42 +65,52 @@ test("every credentialed entrypoint's static import graph excludes external pack
     }
   }
   assert.equal(entrypoints.size, 7);
-  const source = `
-    import assert from "node:assert/strict";
-    import { readFileSync } from "node:fs";
-    import { isBuiltin } from "node:module";
-    import { SourceTextModule } from "node:vm";
-    import path from "node:path";
-    const root = path.resolve("scripts");
-    const pending = ${JSON.stringify([...entrypoints])}.map(name => path.join(root, name));
-    const visited = new Set();
-    while (pending.length) {
-      const file = pending.pop();
-      if (visited.has(file)) continue;
-      visited.add(file);
-      const module = new SourceTextModule(readFileSync(file, "utf8"));
-      for (const specifier of module.dependencySpecifiers) {
-        if (specifier.startsWith("node:") && isBuiltin(specifier)) continue;
-        assert(specifier.startsWith("./") || specifier.startsWith("../"), "external import: " + specifier);
-        const target = path.resolve(path.dirname(file), specifier);
-        assert(target.startsWith(root + path.sep), "import leaves engine scripts");
-        pending.push(target);
-      }
-    }
-  `;
-  const run = () =>
-    spawnSync(process.execPath, ["--experimental-vm-modules", "--input-type=module", "--eval", source], {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 10_000
-    });
-  const clean = run();
-  assert.equal(clean.status, 0, `${clean.error ?? ""}\n${clean.stderr}`);
-  const renderer = path.join(root, "scripts/rendering.mjs");
-  writeFileSync(renderer, `import "yaml";\n${readFileSync(renderer, "utf8")}`);
-  const unsafe = run();
-  assert.equal(unsafe.status, 1, unsafe.stderr);
-  assert.match(unsafe.stderr, /external import: yaml/u);
+  assert.doesNotThrow(() => moduleGraph(root, [...entrypoints]));
+});
+
+for (const [name, source, error] of [
+  ["static external import", 'import "yaml";', /external import: yaml/u],
+  ["external re-export", 'export * from "yaml";', /external import: yaml/u],
+  ["unexecuted dynamic import", 'if (false) await import("yaml");', /external import: yaml/u],
+  ["escaped dynamic specifier", String.raw`await import("\u0079aml");`, /external import: yaml/u],
+  ["dynamic import with attributes", 'await import("yaml", { with: { type: "json" } });', /external import: yaml/u],
+  ["dynamic import in a template expression", 'const text = `${import("yaml")}`;', /external import: yaml/u],
+  ["computed dynamic import", 'const name = "./ordering.mjs"; await import(name);', /computed import/u],
+  ["concatenated dynamic import", 'await import("./" + "ordering.mjs");', /computed import/u],
+  ["import outside engine scripts", 'await import("../outside.mjs");', /import leaves engine scripts/u]
+]) {
+  test(`module boundary rejects ${name}`, (t) => {
+    const root = isolatedEngine(t);
+    writeFileSync(path.join(root, "scripts/import-fixture.mjs"), source);
+    assert.throws(() => moduleGraph(root, ["import-fixture.mjs"]), error);
+  });
+}
+
+test("module boundary follows modules reached only through dynamic imports", (t) => {
+  const root = isolatedEngine(t);
+  writeFileSync(path.join(root, "scripts/import-fixture.mjs"), 'await import("./dynamic-only.mjs");');
+  const dynamic = path.join(root, "scripts/dynamic-only.mjs");
+  writeFileSync(dynamic, 'await import("node:fs"); export { compareStrings } from "./ordering.mjs";');
+  const modules = moduleGraph(root, ["import-fixture.mjs"]);
+  assert.ok(modules.has(dynamic));
+  assert.ok(modules.has(path.join(root, "scripts/ordering.mjs")));
+  writeFileSync(dynamic, 'import "yaml";');
+  assert.throws(() => moduleGraph(root, ["import-fixture.mjs"]), /external import: yaml/u);
+});
+
+test("module boundary ignores import-like comments and strings and permits import.meta", (t) => {
+  const root = isolatedEngine(t);
+  writeFileSync(
+    path.join(root, "scripts/import-fixture.mjs"),
+    [
+      '// import("yaml")',
+      '/* import "yaml"; */',
+      `const text = 'import("yaml")';`,
+      'const template = `import("yaml")`;',
+      "const meta = import.meta.url;"
+    ].join("\n")
+  );
+  assert.equal(moduleGraph(root, ["import-fixture.mjs"]).size, 1);
 });
 
 test("globs, paths, redaction, rendering and lockfile policy work without schemas or parser packages", (t) => {
