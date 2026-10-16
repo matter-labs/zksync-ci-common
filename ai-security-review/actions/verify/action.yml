@@ -1,0 +1,157 @@
+name: Verify AI security review candidates
+description: Adversarially verify candidates and produce the final review artifact
+
+inputs:
+  anthropic_api_key:
+    description: Optional Anthropic API key alternative to workload identity federation
+    required: false
+  anthropic_federation_rule_id:
+    description: Anthropic workload identity federation rule ID
+    required: false
+  anthropic_organization_id:
+    description: Anthropic organization ID
+    required: false
+  anthropic_oidc_audience:
+    description: Audience for the Anthropic workload identity token
+    required: true
+  anthropic_service_account_id:
+    description: Anthropic service account ID
+    required: false
+  anthropic_workspace_id:
+    description: Anthropic workspace ID
+    required: false
+  candidates_directory:
+    description: Directory containing all validated candidate artifacts
+    required: true
+  claude_executable:
+    description: Integrity-verified Claude CLI executable
+    required: true
+  effort:
+    description: Centrally selected Claude effort level
+    required: true
+  fail_on_findings:
+    description: Record whether verified findings fail the final workflow check
+    required: false
+    default: "false"
+  max_budget_usd:
+    description: Maximum Anthropic spend for candidate verification
+    required: true
+  model:
+    description: Centrally selected Claude model
+    required: true
+  output_directory:
+    description: Directory in which to write final artifacts
+    required: true
+  plan_directory:
+    description: Downloaded review-plan directory
+    required: true
+  verification_directory:
+    description: Directory for merged candidates and verifier inputs
+    required: true
+
+outputs:
+  result_file:
+    description: Validated full review result
+    value: ${{ steps.finalize.outputs.result_file }}
+  comment_file:
+    description: Sanitized sticky comment for every completed review
+    value: ${{ steps.finalize.outputs.comment_file }}
+  finding_count:
+    description: Number of publishable findings
+    value: ${{ steps.finalize.outputs.finding_count }}
+  skipped_file_count:
+    description: Number of verified binary assets excluded from model review
+    value: ${{ steps.finalize.outputs.skipped_file_count }}
+  lockfile_source_count:
+    description: Number of new lockfile sources validated
+    value: ${{ steps.finalize.outputs.lockfile_source_count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare isolated Claude session
+      id: session
+      shell: bash
+      env:
+        ENGINE_ROOT: ${{ github.action_path }}/../..
+        SOURCE_DIRECTORY: ${{ github.workspace }}
+      run: node "$ENGINE_ROOT/scripts/prepare-session.mjs"
+
+    - name: Merge candidates and prepare verification
+      id: prepare
+      shell: bash
+      env:
+        CANDIDATES_DIRECTORY: ${{ inputs.candidates_directory }}
+        ENGINE_ROOT: ${{ github.action_path }}/../..
+        OUTPUT_DIRECTORY: ${{ inputs.verification_directory }}
+        PLAN_DIRECTORY: ${{ inputs.plan_directory }}
+        SOURCE_DIRECTORY: ${{ steps.session.outputs.source_directory }}
+      run: node "$ENGINE_ROOT/scripts/prepare-verification.mjs"
+
+    - name: Load verifier schema
+      if: steps.prepare.outputs.has_candidates == 'true'
+      id: schema
+      shell: bash
+      env:
+        ENGINE_ROOT: ${{ github.action_path }}/../..
+      run: node "$ENGINE_ROOT/scripts/emit-schema.mjs" verdicts
+
+    - name: Verify candidates
+      if: steps.prepare.outputs.has_candidates == 'true'
+      id: verifier
+      uses: anthropics/claude-code-action/base-action@fa2b2666b747000bf42767d1f332065b375e3c8f # v1.0.214
+      env:
+        DISABLE_AUTOUPDATER: "1"
+        DISABLE_UPDATES: "1"
+        CLAUDE_WORKING_DIR: ${{ steps.session.outputs.working_directory }}
+      with:
+        anthropic_api_key: ${{ inputs.anthropic_api_key }}
+        anthropic_federation_rule_id: ${{ inputs.anthropic_federation_rule_id }}
+        anthropic_organization_id: ${{ inputs.anthropic_organization_id }}
+        anthropic_oidc_audience: ${{ inputs.anthropic_oidc_audience }}
+        anthropic_service_account_id: ${{ inputs.anthropic_service_account_id }}
+        anthropic_workspace_id: ${{ inputs.anthropic_workspace_id }}
+        path_to_claude_code_executable: ${{ inputs.claude_executable }}
+        show_full_output: "false"
+        prompt_file: ${{ inputs.verification_directory }}/verifier.prompt.md
+        claude_args: >-
+          --model "${{ inputs.model }}"
+          --effort "${{ inputs.effort }}"
+          --max-budget-usd "${{ inputs.max_budget_usd }}"
+          --max-turns "${{ steps.prepare.outputs.max_turns }}"
+          --json-schema '${{ steps.schema.outputs.schema }}'
+          --tools "Read,Grep,Glob"
+          --disallowedTools "Bash,Write,Edit,NotebookEdit,Agent,WebFetch,WebSearch"
+          --add-dir "${{ inputs.plan_directory }}"
+          --add-dir "${{ inputs.verification_directory }}"
+          --add-dir "${{ steps.session.outputs.source_directory }}"
+          --safe-mode
+          --strict-mcp-config
+          --disable-slash-commands
+          --restricted
+          --settings "${{ steps.session.outputs.settings_file }}"
+
+    - name: Build final result
+      id: finalize
+      shell: bash
+      env:
+        FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings }}
+        DIAGNOSTICS_DIRECTORY: ${{ runner.temp }}/ai-security-review-diagnostics
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        ENGINE_ROOT: ${{ github.action_path }}/../..
+        EXECUTION_FILE: ${{ steps.verifier.outputs.execution_file }}
+        OUTPUT_DIRECTORY: ${{ inputs.output_directory }}
+        PLAN_DIRECTORY: ${{ inputs.plan_directory }}
+        VERIFICATION_DIRECTORY: ${{ inputs.verification_directory }}
+      run: node "$ENGINE_ROOT/scripts/finalize.mjs"
+
+    - name: Record sanitized session diagnostics
+      if: always()
+      shell: bash
+      env:
+        DIAGNOSTICS_DIRECTORY: ${{ runner.temp }}/ai-security-review-diagnostics
+        STAGE: verifier
+        MODEL_OUTCOME: ${{ steps.verifier.outcome }}
+        EXECUTION_FILE: ${{ steps.verifier.outputs.execution_file }}
+        ENGINE_ROOT: ${{ github.action_path }}/../..
+      run: node "$ENGINE_ROOT/scripts/report-session.mjs"

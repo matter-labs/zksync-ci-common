@@ -9,6 +9,11 @@ write smart contracts in C++, Rust and other popular languages.
 
 This repository contains common CI actions and workflows for ZKsync repositories.
 
+## AI Security Review
+
+The [AI Security Review engine](ai-security-review/README.md) provides reusable pull-request and merge-queue review.
+See its [integration examples](ai-security-review/examples/README.md) and [maintainer guide](ai-security-review/MAINTAINING.md).
+
 ## License
 
 This project is distributed under the terms of either:

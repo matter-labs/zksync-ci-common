@@ -1,0 +1,17 @@
+{
+  "name": "@matter-labs/ai-security-review",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@yarnpkg/lockfile": "1.1.0",
+    "hosted-git-info": "10.1.1",
+    "jsonc-parser": "3.3.1",
+    "smol-toml": "1.9.1",
+    "yaml": "2.9.0"
+  },
+  "license": "MIT OR Apache-2.0",
+  "devDependencies": {
+    "commonmark": "0.31.2",
+    "es-module-lexer": "3.0.4"
+  }
+}

@@ -1,0 +1,630 @@
+name: AI Security Review
+
+on:
+  workflow_call:
+    inputs:
+      maximum_batches:
+        description: Normal pull request batch limit
+        required: false
+        type: number
+        default: 24
+      fail_on_findings:
+        description: Fail the final check when verified HIGH or MEDIUM findings remain
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: Optional API key alternative to workload identity federation
+        required: false
+
+permissions: {}
+
+env:
+  NODE_VERSION: "22"
+
+  # Model
+  AI_SECURITY_REVIEW_MODEL: claude-opus-4-8
+  AI_SECURITY_REVIEW_EFFORT: high
+
+  # Spending and batch sizes
+  AI_SECURITY_REVIEW_REVIEW_MAX_BUDGET_USD: "20"
+  AI_SECURITY_REVIEW_VERIFY_MAX_BUDGET_USD: "20"
+  AI_SECURITY_REVIEW_MAXIMUM_BATCHES: ${{ inputs.maximum_batches }}
+  AI_SECURITY_REVIEW_MAXIMUM_UNIT_BYTES: "80000"
+  AI_SECURITY_REVIEW_MAXIMUM_BATCH_BYTES: "160000"
+
+  # CLI
+  CLAUDE_CLI_VERSION: "2.1.296"
+  CLAUDE_CLI_URL: https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.296.tgz
+  CLAUDE_CLI_INTEGRITY: sha512-+m01urgelnI+VJxPaKPEK0wixgq42uZ8PeCaUk5tX/8YoDBvSmC/REVQG2jQfJAr8dxunpjJ600FvLrcj1WWTw==
+
+  # Artifacts
+  AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS: "7"
+
+  # Deployment
+  AI_SECURITY_REVIEW_ENGINE_REPOSITORY: matter-labs/zksync-ci-common
+  AI_SECURITY_REVIEW_OIDC_AUDIENCE: https://api.anthropic.com
+
+jobs:
+  # Fetch and verify the CLI before any job receives OIDC or Anthropic credentials.
+  prepare_cli:
+    name: Prepare pinned Claude CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Download and verify Claude CLI
+        env:
+          CLAUDE_DIRECTORY: ${{ runner.temp }}/claude-code
+          CLAUDE_EXECUTABLE: ${{ runner.temp }}/claude-code/extracted/package/claude
+        run: |
+          set -euo pipefail
+          mkdir -p "$CLAUDE_DIRECTORY"
+          curl --proto '=https' --tlsv1.2 --fail --location --output "$CLAUDE_DIRECTORY/claude-code.tgz" "$CLAUDE_CLI_URL"
+          node -e '
+            const { createHash } = require("node:crypto");
+            const { readFileSync } = require("node:fs");
+            const actual = `sha512-${createHash("sha512").update(readFileSync(process.argv[1])).digest("base64")}`;
+            if (actual !== process.env.CLAUDE_CLI_INTEGRITY) throw new Error(`Claude CLI integrity mismatch: ${actual}`);
+          ' "$CLAUDE_DIRECTORY/claude-code.tgz"
+          mkdir "$CLAUDE_DIRECTORY/extracted"
+          tar -xzf "$CLAUDE_DIRECTORY/claude-code.tgz" -C "$CLAUDE_DIRECTORY/extracted"
+          test -x "$CLAUDE_EXECUTABLE"
+          ACTUAL_VERSION="$("$CLAUDE_EXECUTABLE" --version)"
+          test "$ACTUAL_VERSION" = "${CLAUDE_CLI_VERSION} (Claude Code)"
+          "$CLAUDE_EXECUTABLE" --help >/dev/null
+
+      - name: Upload verified Claude CLI archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-security-review-cli-${{ github.run_id }}
+          overwrite: true
+          if-no-files-found: error
+          path: ${{ runner.temp }}/claude-code/claude-code.tgz
+          compression-level: 0
+          retention-days: ${{ env.AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS }}
+
+  prepare:
+    name: Prepare review plan
+    if: >-
+      github.event_name == 'merge_group' ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      batch_count: ${{ steps.prepare.outputs.batch_count }}
+      has_batches: ${{ steps.prepare.outputs.has_batches }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Checkout pull request head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+
+      - name: Validate review workflow identity
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$WORKFLOW_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "::error::Unexpected review workflow repository: $WORKFLOW_REPOSITORY"
+            exit 1
+          fi
+          if [[ ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40,64}$ ]]; then
+            echo "::error::Review workflow SHA is missing or invalid"
+            exit 1
+          fi
+
+      - name: Checkout review engine
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          repository: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          ref: ${{ job.workflow_sha }}
+          path: .ai-security-review-engine
+          persist-credentials: false
+
+      - name: Verify review engine revision
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git -C .ai-security-review-engine rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Review engine checkout does not match the workflow SHA"
+            exit 1
+          fi
+
+      - name: Prepare complete local diff
+        id: prepare
+        uses: ./.ai-security-review-engine/ai-security-review/actions/prepare
+        with:
+          base_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          head_sha: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          maximum_batches: ${{ env.AI_SECURITY_REVIEW_MAXIMUM_BATCHES }}
+          maximum_unit_bytes: ${{ env.AI_SECURITY_REVIEW_MAXIMUM_UNIT_BYTES }}
+          maximum_batch_bytes: ${{ env.AI_SECURITY_REVIEW_MAXIMUM_BATCH_BYTES }}
+          output_directory: ${{ runner.temp }}/ai-security-review-plan
+          pull_request_title: ${{ github.event.pull_request.title || 'Merge group security review' }}
+          repository: ${{ github.repository }}
+
+      - name: Upload review plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-security-review-plan-${{ github.run_id }}
+          overwrite: true
+          include-hidden-files: true
+          path: ${{ runner.temp }}/ai-security-review-plan
+          retention-days: ${{ env.AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS }}
+
+  review:
+    name: Review ${{ matrix.batch }}
+    needs: [prepare_cli, prepare]
+    if: needs.prepare_cli.result == 'success' && needs.prepare.outputs.has_batches == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        batch: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Checkout pull request head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+
+      - name: Validate review workflow identity
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$WORKFLOW_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "::error::Unexpected review workflow repository: $WORKFLOW_REPOSITORY"
+            exit 1
+          fi
+          if [[ ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40,64}$ ]]; then
+            echo "::error::Review workflow SHA is missing or invalid"
+            exit 1
+          fi
+
+      - name: Checkout review engine
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          repository: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          ref: ${{ job.workflow_sha }}
+          path: .ai-security-review-engine
+          persist-credentials: false
+
+      - name: Verify review engine revision
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git -C .ai-security-review-engine rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Review engine checkout does not match the workflow SHA"
+            exit 1
+          fi
+
+      - name: Download review plan
+        id: plan_artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-security-review-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/ai-security-review-plan
+
+      - name: Download Claude CLI archive
+        id: cli_artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-security-review-cli-${{ github.run_id }}
+          path: ${{ runner.temp }}/claude-code
+
+      - name: Explain missing prerequisite artifacts
+        if: failure() && (steps.plan_artifact.outcome == 'failure' || steps.cli_artifact.outcome == 'failure')
+        run: echo "::error::A prerequisite artifact could not be downloaded. If it is missing or expired, re-run all jobs to regenerate it."
+
+      - name: Verify and extract Claude CLI
+        env:
+          CLAUDE_DIRECTORY: ${{ runner.temp }}/claude-code
+          CLAUDE_EXECUTABLE: ${{ runner.temp }}/claude-code/extracted/package/claude
+        run: |
+          set -euo pipefail
+          node -e '
+            const { createHash } = require("node:crypto");
+            const { readFileSync } = require("node:fs");
+            const actual = `sha512-${createHash("sha512").update(readFileSync(process.argv[1])).digest("base64")}`;
+            if (actual !== process.env.CLAUDE_CLI_INTEGRITY) throw new Error(`Claude CLI integrity mismatch: ${actual}`);
+          ' "$CLAUDE_DIRECTORY/claude-code.tgz"
+          mkdir "$CLAUDE_DIRECTORY/extracted"
+          tar -xzf "$CLAUDE_DIRECTORY/claude-code.tgz" -C "$CLAUDE_DIRECTORY/extracted"
+          test -x "$CLAUDE_EXECUTABLE"
+
+      - name: Review batch
+        id: review
+        uses: ./.ai-security-review-engine/ai-security-review/actions/review
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_oidc_audience: ${{ env.AI_SECURITY_REVIEW_OIDC_AUDIENCE }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          batch_id: ${{ matrix.batch }}
+          candidates_directory: ${{ runner.temp }}/ai-security-review-candidates
+          claude_executable: ${{ runner.temp }}/claude-code/extracted/package/claude
+          effort: ${{ env.AI_SECURITY_REVIEW_EFFORT }}
+          max_budget_usd: ${{ env.AI_SECURITY_REVIEW_REVIEW_MAX_BUDGET_USD }}
+          model: ${{ env.AI_SECURITY_REVIEW_MODEL }}
+          plan_directory: ${{ runner.temp }}/ai-security-review-plan
+
+      - name: Upload sanitized session diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-security-review-diagnostics-${{ matrix.batch }}-${{ github.run_id }}
+          overwrite: true
+          path: ${{ runner.temp }}/ai-security-review-diagnostics
+          if-no-files-found: ignore
+          retention-days: ${{ env.AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS }}
+
+      - name: Upload validated candidates
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-security-review-candidates-${{ matrix.batch }}-${{ github.run_id }}
+          overwrite: true
+          path: ${{ steps.review.outputs.candidate_file }}
+          retention-days: ${{ env.AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS }}
+
+  verify:
+    name: Verify candidates
+    needs: [prepare_cli, prepare, review]
+    outputs:
+      finding_count: ${{ steps.verify.outputs.finding_count }}
+    if: >-
+      always() &&
+      needs.prepare_cli.result == 'success' &&
+      needs.prepare.result == 'success' &&
+      (needs.review.result == 'success' || needs.prepare.outputs.has_batches == 'false')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Checkout pull request head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+
+      - name: Validate review workflow identity
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$WORKFLOW_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "::error::Unexpected review workflow repository: $WORKFLOW_REPOSITORY"
+            exit 1
+          fi
+          if [[ ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40,64}$ ]]; then
+            echo "::error::Review workflow SHA is missing or invalid"
+            exit 1
+          fi
+
+      - name: Checkout review engine
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          repository: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          ref: ${{ job.workflow_sha }}
+          path: .ai-security-review-engine
+          persist-credentials: false
+
+      - name: Verify review engine revision
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git -C .ai-security-review-engine rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Review engine checkout does not match the workflow SHA"
+            exit 1
+          fi
+
+      - name: Download review plan
+        id: plan_artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-security-review-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/ai-security-review-plan
+
+      - name: Download Claude CLI archive
+        id: cli_artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-security-review-cli-${{ github.run_id }}
+          path: ${{ runner.temp }}/claude-code
+
+      - name: Explain missing prerequisite artifacts
+        if: failure() && (steps.plan_artifact.outcome == 'failure' || steps.cli_artifact.outcome == 'failure')
+        run: echo "::error::A prerequisite artifact could not be downloaded. If it is missing or expired, re-run all jobs to regenerate it."
+
+      - name: Verify and extract Claude CLI
+        env:
+          CLAUDE_DIRECTORY: ${{ runner.temp }}/claude-code
+          CLAUDE_EXECUTABLE: ${{ runner.temp }}/claude-code/extracted/package/claude
+        run: |
+          set -euo pipefail
+          node -e '
+            const { createHash } = require("node:crypto");
+            const { readFileSync } = require("node:fs");
+            const actual = `sha512-${createHash("sha512").update(readFileSync(process.argv[1])).digest("base64")}`;
+            if (actual !== process.env.CLAUDE_CLI_INTEGRITY) throw new Error(`Claude CLI integrity mismatch: ${actual}`);
+          ' "$CLAUDE_DIRECTORY/claude-code.tgz"
+          mkdir "$CLAUDE_DIRECTORY/extracted"
+          tar -xzf "$CLAUDE_DIRECTORY/claude-code.tgz" -C "$CLAUDE_DIRECTORY/extracted"
+          test -x "$CLAUDE_EXECUTABLE"
+
+      - name: Create candidates directory
+        env:
+          CANDIDATES_DIRECTORY: ${{ runner.temp }}/ai-security-review-candidates
+        run: mkdir -p "$CANDIDATES_DIRECTORY"
+
+      - name: Download validated candidates
+        if: needs.prepare.outputs.has_batches == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          merge-multiple: true
+          pattern: ai-security-review-candidates-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/ai-security-review-candidates
+
+      - name: Verify and finalize candidates
+        id: verify
+        uses: ./.ai-security-review-engine/ai-security-review/actions/verify
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_oidc_audience: ${{ env.AI_SECURITY_REVIEW_OIDC_AUDIENCE }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          candidates_directory: ${{ runner.temp }}/ai-security-review-candidates
+          claude_executable: ${{ runner.temp }}/claude-code/extracted/package/claude
+          effort: ${{ env.AI_SECURITY_REVIEW_EFFORT }}
+          fail_on_findings: ${{ inputs.fail_on_findings }}
+          max_budget_usd: ${{ env.AI_SECURITY_REVIEW_VERIFY_MAX_BUDGET_USD }}
+          model: ${{ env.AI_SECURITY_REVIEW_MODEL }}
+          output_directory: ${{ runner.temp }}/ai-security-review-result
+          plan_directory: ${{ runner.temp }}/ai-security-review-plan
+          verification_directory: ${{ runner.temp }}/ai-security-review-verification
+
+      - name: Upload sanitized session diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-security-review-diagnostics-verifier-${{ github.run_id }}
+          overwrite: true
+          path: ${{ runner.temp }}/ai-security-review-diagnostics
+          if-no-files-found: ignore
+          retention-days: ${{ env.AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS }}
+
+      - name: Write job summary
+        env:
+          BATCH_COUNT: ${{ needs.prepare.outputs.batch_count }}
+          FINDING_COUNT: ${{ steps.verify.outputs.finding_count }}
+          LOCKFILE_SOURCE_COUNT: ${{ steps.verify.outputs.lockfile_source_count }}
+          SKIPPED_FILE_COUNT: ${{ steps.verify.outputs.skipped_file_count }}
+        run: |
+          {
+            echo "## AI security review"
+            echo
+            echo "Review batches: ${BATCH_COUNT}"
+            echo "Published findings: ${FINDING_COUNT}"
+            echo "New lockfile sources validated: ${LOCKFILE_SOURCE_COUNT}"
+            echo "Verified binary assets skipped: ${SKIPPED_FILE_COUNT}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload complete review result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-security-review-result-${{ github.run_id }}
+          overwrite: true
+          path: ${{ runner.temp }}/ai-security-review-result
+          retention-days: ${{ env.AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS }}
+
+  publish:
+    name: Publish result
+    needs: [prepare, review, verify]
+    concurrency:
+      group: matter-labs-ai-security-review-publish-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: false
+      queue: max
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Validate review workflow identity
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$WORKFLOW_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "::error::Unexpected review workflow repository: $WORKFLOW_REPOSITORY"
+            exit 1
+          fi
+          if [[ ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40,64}$ ]]; then
+            echo "::error::Review workflow SHA is missing or invalid"
+            exit 1
+          fi
+
+      - name: Checkout review engine
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          repository: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          ref: ${{ job.workflow_sha }}
+          path: .ai-security-review-engine
+          persist-credentials: false
+
+      - name: Verify review engine revision
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git -C .ai-security-review-engine rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Review engine checkout does not match the workflow SHA"
+            exit 1
+          fi
+
+      - name: Download complete review result
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-security-review-result-${{ github.run_id }}
+          path: ${{ runner.temp }}/ai-security-review-result
+
+      - name: Update security review comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          RESULT_DIRECTORY: ${{ runner.temp }}/ai-security-review-result
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node .ai-security-review-engine/ai-security-review/scripts/publish-result.mjs
+
+  complete:
+    name: Complete
+    needs: [prepare_cli, prepare, review, verify, publish]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Validate review workflow identity
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$WORKFLOW_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "::error::Unexpected review workflow repository: $WORKFLOW_REPOSITORY"
+            exit 1
+          fi
+          if [[ ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40,64}$ ]]; then
+            echo "::error::Review workflow SHA is missing or invalid"
+            exit 1
+          fi
+
+      - name: Checkout review engine
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          repository: ${{ env.AI_SECURITY_REVIEW_ENGINE_REPOSITORY }}
+          ref: ${{ job.workflow_sha }}
+          path: .ai-security-review-engine
+          persist-credentials: false
+
+      - name: Verify review engine revision
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git -C .ai-security-review-engine rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Review engine checkout does not match the workflow SHA"
+            exit 1
+          fi
+
+      - name: Assert review completed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings }}
+          FINDING_COUNT: ${{ needs.verify.outputs.finding_count }}
+          HAS_BATCHES: ${{ needs.prepare.outputs.has_batches }}
+          IS_INTERNAL: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
+          PREPARE_CLI_RESULT: ${{ needs.prepare_cli.result }}
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: node .ai-security-review-engine/ai-security-review/scripts/assert-complete.mjs

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "profiles": ["domains/compiler-vm"],
+  "context": [".github/security-review-focus.md"],
+  "pathProfiles": [
+    {
+      "paths": ["circuits/**"],
+      "profiles": ["domains/zk-circuit", "domains/cryptography"]
+    }
+  ],
+  "groupRoots": ["compiler", "circuits"]
+}

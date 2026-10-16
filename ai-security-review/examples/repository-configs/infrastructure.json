@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "profiles": ["domains/infrastructure-as-code"],
+  "context": [".github/security-review-focus.md"],
+  "pathProfiles": [
+    {
+      "paths": [".github/**", "scripts/**"],
+      "profiles": ["domains/privileged-automation", "domains/ci-supply-chain"]
+    }
+  ]
+}

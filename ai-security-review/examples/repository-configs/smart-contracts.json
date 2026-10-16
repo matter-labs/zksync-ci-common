@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "profiles": ["domains/smart-contracts", "domains/authorization"],
+  "context": [".github/security-review-focus.md"],
+  "pathProfiles": [
+    {
+      "paths": ["contracts/bridge/**"],
+      "profiles": ["domains/bridge-cross-chain"]
+    }
+  ]
+}

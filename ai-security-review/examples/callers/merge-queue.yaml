@@ -1,0 +1,28 @@
+name: AI Security Review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+
+permissions: {}
+
+concurrency:
+  group: ai-security-review-caller-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ai-security-review:
+    if: >-
+      github.event_name == 'merge_group' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       !github.event.pull_request.draft &&
+       github.actor != 'dependabot[bot]')
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    uses: matter-labs/zksync-ci-common/.github/workflows/ai-security-review.yaml@ENGINE_COMMIT_SHA
+    with:
+      maximum_batches: 24
