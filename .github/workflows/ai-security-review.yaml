@@ -82,7 +82,7 @@ jobs:
           "$CLAUDE_EXECUTABLE" --help >/dev/null
 
       - name: Upload verified Claude CLI archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-security-review-cli-${{ github.run_id }}
           overwrite: true
@@ -171,7 +171,7 @@ jobs:
           repository: ${{ github.repository }}
 
       - name: Upload review plan
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-security-review-plan-${{ github.run_id }}
           overwrite: true
@@ -299,7 +299,7 @@ jobs:
 
       - name: Upload sanitized session diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-security-review-diagnostics-${{ matrix.batch }}-${{ github.run_id }}
           overwrite: true
@@ -308,7 +308,7 @@ jobs:
           retention-days: ${{ env.AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS }}
 
       - name: Upload validated candidates
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-security-review-candidates-${{ matrix.batch }}-${{ github.run_id }}
           overwrite: true
@@ -451,7 +451,7 @@ jobs:
 
       - name: Upload sanitized session diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-security-review-diagnostics-verifier-${{ github.run_id }}
           overwrite: true
@@ -476,7 +476,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload complete review result
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ai-security-review-result-${{ github.run_id }}
           overwrite: true
