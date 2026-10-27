@@ -241,7 +241,7 @@ test("central workflow binds its engine to the running workflow commit and bound
 test("central workflow uses an integrity-verified Claude CLI without executing its installer", () => {
   const workflow = readFileSync(`${repositoryRoot}/.github/workflows/ai-security-review.yaml`, "utf8");
   const ciWorkflow = readFileSync(`${repositoryRoot}/.github/workflows/ai-security-review-ci.yaml`, "utf8");
-  assert.match(workflow, /claude-code-linux-x64-2\.1\.296\.tgz/u);
+  assert.match(workflow, /claude-code-linux-x64-2\.1\.308\.tgz/u);
   assert.match(workflow, /CLAUDE_CLI_INTEGRITY: sha512-/u);
   assert.match(workflow, /actual !== process\.env\.CLAUDE_CLI_INTEGRITY/u);
   assert.match(workflow, /test -x "\$CLAUDE_EXECUTABLE"/u);
