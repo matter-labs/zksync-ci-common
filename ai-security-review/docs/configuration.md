@@ -26,7 +26,7 @@ environment variables. Change the engine, review the revision, then update consu
 | `AI_SECURITY_REVIEW_VERIFY_MAX_BUDGET_USD`   | `20`                           | USD per verifier session.                                   |
 | `AI_SECURITY_REVIEW_MAXIMUM_UNIT_BYTES`      | `80000`                        | Maximum patch-unit bytes.                                   |
 | `AI_SECURITY_REVIEW_MAXIMUM_BATCH_BYTES`     | `160000`                       | Maximum batch bytes.                                        |
-| `CLAUDE_CLI_VERSION`                         | `2.1.296`                      | Integrity-pinned native CLI.                                |
+| `CLAUDE_CLI_VERSION`                         | `2.1.308`                      | Integrity-pinned native CLI.                                |
 | `AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS` | `7`                            | Days retained for every engine artifact.                    |
 | `AI_SECURITY_REVIEW_ENGINE_REPOSITORY`       | `matter-labs/zksync-ci-common` | Expected reusable workflow repository.                      |
 | `AI_SECURITY_REVIEW_OIDC_AUDIENCE`           | `https://api.anthropic.com`    | Audience used when obtaining OIDC tokens.                   |

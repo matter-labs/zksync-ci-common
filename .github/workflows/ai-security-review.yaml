@@ -35,9 +35,9 @@ env:
   AI_SECURITY_REVIEW_MAXIMUM_BATCH_BYTES: "160000"
 
   # CLI
-  CLAUDE_CLI_VERSION: "2.1.296"
-  CLAUDE_CLI_URL: https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.296.tgz
-  CLAUDE_CLI_INTEGRITY: sha512-+m01urgelnI+VJxPaKPEK0wixgq42uZ8PeCaUk5tX/8YoDBvSmC/REVQG2jQfJAr8dxunpjJ600FvLrcj1WWTw==
+  CLAUDE_CLI_VERSION: "2.1.308"
+  CLAUDE_CLI_URL: https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.308.tgz
+  CLAUDE_CLI_INTEGRITY: sha512-ffUryevpH7POStPJ/xpUI5R1ozYbH9o/Dbh/xPSmyVJehELnRMZmRnejdQmq0TejOW/SbNnJFhCGMgwIsOqFTQ==
 
   # Artifacts
   AI_SECURITY_REVIEW_ARTIFACT_RETENTION_DAYS: "7"
