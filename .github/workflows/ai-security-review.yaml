@@ -24,7 +24,7 @@ env:
   NODE_VERSION: "22"
 
   # Model
-  AI_SECURITY_REVIEW_MODEL: claude-opus-4-8
+  AI_SECURITY_REVIEW_MODEL: claude-sonnet-5-5
   AI_SECURITY_REVIEW_EFFORT: high
 
   # Spending and batch sizes
