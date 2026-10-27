@@ -303,7 +303,9 @@ async function runAction(executable, actionName, root, scenario = "coverage") {
       console.log("Verified schema-rejection diagnostics from actual CLI output with a local fake API.");
       return;
     }
-    assert.deepEqual(initial.tools.map((tool) => tool.name).sort(), ["Glob", "Grep", "Read", "StructuredOutput"]);
+    // Newer CLI builds list a placeholder for ToolSearch-deferred tools; nothing is deferred here.
+    const toolNames = initial.tools.map((tool) => tool.name).filter((name) => name !== "DeferredToolPlaceholder");
+    assert.deepEqual(toolNames.sort(), ["Glob", "Grep", "Read", "StructuredOutput"]);
     assert(!JSON.stringify(initial).includes("STARTUP_INSTRUCTION_CANARY"));
     assert(!JSON.stringify(initial).includes("STARTUP_SKILL_CANARY"));
     assert(!existsSync(marker));
