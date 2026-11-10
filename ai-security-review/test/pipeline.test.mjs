@@ -968,6 +968,63 @@ test("verified binary assets are skipped and ambiguous binary content fails prep
   }
 });
 
+test("configured regenerable artifacts are skipped while protected paths and moved code stay in review", (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "ai-review-regenerable-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repository = path.join(root, "repository");
+  initRepository(repository);
+  write(
+    path.join(repository, ".github/ai-security-review.json"),
+    JSON.stringify({
+      version: 1,
+      context: ["docs/focus.md"],
+      regenerableArtifacts: [
+        {
+          paths: ["generated/**", "package-lock.json", ".github/generated.json", "docs/focus.md"],
+          verifiedBy: "pre-merge-checks"
+        }
+      ]
+    })
+  );
+  write(path.join(repository, "docs/focus.md"), "Applies to the fixture.\n");
+  write(path.join(repository, "generated/hashes.json"), '{"hash":"0x01"}\n');
+  write(path.join(repository, "generated/snapshot.bin"), "text\n");
+  write(path.join(repository, ".github/generated.json"), "{}\n");
+  write(path.join(repository, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: {} }));
+  write(path.join(repository, "src/source.js"), "export const value = 1;\n");
+  const baseSha = commitAll(repository, "fixture: regenerable base");
+
+  write(path.join(repository, "generated/hashes.json"), '{"hash":"0x02"}\n');
+  write(path.join(repository, "generated/snapshot.bin"), Buffer.from([0x00, 0x01, 0x02]));
+  write(path.join(repository, "generated/added.json"), "{}\n");
+  write(path.join(repository, ".github/generated.json"), '{"changed":true}\n');
+  write(path.join(repository, "docs/focus.md"), "Applies to the fixture, changed.\n");
+  write(
+    path.join(repository, "package-lock.json"),
+    JSON.stringify({ lockfileVersion: 3, packages: { "": { name: "fixture" } } })
+  );
+  runGit(repository, "mv", "src/source.js", "generated/source.js");
+  const headSha = commitAll(repository, "fixture: regenerable changes");
+
+  const planDirectory = path.join(root, "plan");
+  runScript("prepare.mjs", repository, prepareEnvironment(repository, baseSha, headSha, planDirectory));
+  const plan = JSON.parse(readFileSync(path.join(planDirectory, "plan.json"), "utf8"));
+  const skipped = { reason: "regenerable-artifact", verified_by: "pre-merge-checks" };
+  assert.deepEqual(plan.skippedFiles, [
+    { path: "generated/added.json", ...skipped },
+    { path: "generated/hashes.json", ...skipped },
+    { path: "generated/snapshot.bin", ...skipped }
+  ]);
+  const reviewedPaths = new Set(plan.units.map((unit) => unit.path));
+  for (const reviewed of [".github/generated.json", "docs/focus.md", "package-lock.json", "generated/source.js"]) {
+    assert.ok(reviewedPaths.has(reviewed), `${reviewed} must stay in review`);
+  }
+  for (const skippedFile of plan.skippedFiles) assert.ok(!reviewedPaths.has(skippedFile.path));
+  const manifest = JSON.parse(readFileSync(path.join(planDirectory, "changed-files.json"), "utf8"));
+  assert.ok(manifest.changed_files.some((file) => file.path === "generated/hashes.json"));
+  assert.deepEqual(manifest.skipped_files, plan.skippedFiles);
+});
+
 test("literal pathspec handling isolates filenames that begin with a colon", () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "ai-security-review-pathspec-"));
   const repository = path.join(temporaryRoot, "repository");

@@ -10,6 +10,7 @@ const CONFIG_SCHEMA = JSON.parse(
 );
 const CONFIG_PROPERTIES = CONFIG_SCHEMA.properties;
 const PATH_PROFILE_SCHEMA = CONFIG_PROPERTIES.pathProfiles.items;
+const REGENERABLE_ARTIFACT_SCHEMA = CONFIG_PROPERTIES.regenerableArtifacts.items;
 
 function assertArrayOfStrings(value, name, schema) {
   const minimumItems = schema.minItems ?? 0;
@@ -71,7 +72,8 @@ export function validateRepositoryConfig(value, profilesRoot) {
     pathProfiles = [],
     allowedLockfileHosts = [],
     allowedLockfileSources = [],
-    groupRoots = []
+    groupRoots = [],
+    regenerableArtifacts = []
   } = value;
   for (const [name, values] of Object.entries({
     profiles,
@@ -117,6 +119,32 @@ export function validateRepositoryConfig(value, profilesRoot) {
       validateProfileId(profile, profilesRoot);
     }
   }
+  assert(
+    Array.isArray(regenerableArtifacts) &&
+      regenerableArtifacts.length <= CONFIG_PROPERTIES.regenerableArtifacts.maxItems,
+    `regenerableArtifacts must be an array containing at most ${CONFIG_PROPERTIES.regenerableArtifacts.maxItems} entries`
+  );
+  for (const [index, entry] of regenerableArtifacts.entries()) {
+    const name = `regenerableArtifacts[${index}]`;
+    assert(entry && typeof entry === "object" && !Array.isArray(entry), `${name} must be an object`);
+    for (const key of Object.keys(entry)) {
+      assert(Object.hasOwn(REGENERABLE_ARTIFACT_SCHEMA.properties, key), `${name} contains unknown key: ${key}`);
+    }
+    assertArrayOfStrings(entry.paths, `${name}.paths`, REGENERABLE_ARTIFACT_SCHEMA.properties.paths);
+    for (const pattern of entry.paths) {
+      validateGlob(pattern);
+      // A pattern made only of wildcards would silently exclude most of the repository from review.
+      assert(/[^*?/]/u.test(pattern), `${name}.paths entry must name a path, not only wildcards: ${pattern}`);
+    }
+    const verifiedBy = REGENERABLE_ARTIFACT_SCHEMA.properties.verifiedBy;
+    assert(
+      typeof entry.verifiedBy === "string" &&
+        entry.verifiedBy.trim().length >= verifiedBy.minLength &&
+        entry.verifiedBy.length <= verifiedBy.maxLength &&
+        !/\p{Cc}/u.test(entry.verifiedBy),
+      `${name}.verifiedBy must be a single-line string of 1 to ${verifiedBy.maxLength} characters`
+    );
+  }
 
   return {
     version: value.version,
@@ -125,6 +153,7 @@ export function validateRepositoryConfig(value, profilesRoot) {
     pathProfiles,
     allowedLockfileHosts,
     allowedLockfileSources,
-    groupRoots
+    groupRoots,
+    regenerableArtifacts
   };
 }
