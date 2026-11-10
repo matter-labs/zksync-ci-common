@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { compareStrings } from "./ordering.mjs";
+import { matchesGlob } from "./globs.mjs";
 import { assertGitlinkCoverage, changedGitlinks, gitlinks } from "./submodules.mjs";
 import { loadProfileText, orderedProfiles, profilesForPath } from "./profiles.mjs";
 import { sanitizeUntrustedText } from "./redaction.mjs";
@@ -160,7 +161,8 @@ function loadConfiguration() {
       pathProfiles: [],
       allowedLockfileHosts: [],
       allowedLockfileSources: [],
-      groupRoots: []
+      groupRoots: [],
+      regenerableArtifacts: []
     };
   }
   let parsed;
@@ -342,7 +344,24 @@ function profilesForFile(file, config, chunks) {
   };
 }
 
-function buildUnits(files, config, manifestDirs) {
+// Lockfiles keep their source policy, .github/ holds workflows and the review's own trusted inputs, and submodule
+// pointers and context files are always reviewed, whatever the configured regenerable-artifact patterns match.
+function isAlwaysReviewedPath(filePath, alwaysReviewed) {
+  return filePath.startsWith(".github/") || isLockfilePath(filePath) || alwaysReviewed.has(filePath);
+}
+
+// A rename or copy is skipped only when its previous path is also regenerable, so reviewed code cannot be moved into
+// a skipped path without review.
+function regenerableArtifactFor(file, config, alwaysReviewed) {
+  const entryFor = (filePath) =>
+    config.regenerableArtifacts.find((entry) => entry.paths.some((pattern) => matchesGlob(pattern, filePath)));
+  const paths = file.oldPath && file.oldPath !== file.path ? [file.path, file.oldPath] : [file.path];
+  if (paths.some((filePath) => isAlwaysReviewedPath(filePath, alwaysReviewed))) return null;
+  if (!paths.every((filePath) => entryFor(filePath))) return null;
+  return entryFor(file.path);
+}
+
+function buildUnits(files, config, manifestDirs, alwaysReviewed) {
   const units = [];
   const eligibleFiles = [];
   const skippedFiles = [];
@@ -355,6 +374,12 @@ function buildUnits(files, config, manifestDirs) {
     const eligibility = eligibilityForPath(filePath);
     if (!eligibility.eligible) {
       throw new Error(`unsafe repository file path: ${filePath}`);
+    }
+
+    const regenerable = regenerableArtifactFor(file, config, alwaysReviewed);
+    if (regenerable) {
+      skippedFiles.push({ path: filePath, reason: "regenerable-artifact", verified_by: regenerable.verifiedBy });
+      continue;
     }
 
     if (isBinaryFile(file)) {
@@ -580,7 +605,12 @@ const trustedContext = loadTrustedContext(configuration);
 const files = changedFiles();
 const submoduleChanges = changedGitlinks(baseTree, headTree);
 const manifestDirs = manifestDirectories([...trackedPaths(mergeBaseSha), ...trackedPaths(headSha)]);
-const prepared = buildUnits(files, configuration, manifestDirs);
+const alwaysReviewed = new Set([
+  ...baseGitlinks.keys(),
+  ...gitlinks(headTree).keys(),
+  ...trustedContext.map((entry) => entry.path)
+]);
+const prepared = buildUnits(files, configuration, manifestDirs, alwaysReviewed);
 assertGitlinkCoverage(submoduleChanges, prepared.units);
 const batches = writeBatchPrompts(buildBatches(prepared.units), trustedContext, prepared.profileRouting);
 const batchByUnit = new Map(batches.flatMap((batch) => batch.units.map((unit) => [unit.id, batch.id])));

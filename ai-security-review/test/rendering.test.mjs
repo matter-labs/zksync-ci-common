@@ -22,6 +22,24 @@ test("unclassified dependency changes produce a neutral notice even without AI f
   assert.match(combined, /additional verified finding/u);
 });
 
+test("comment counts binary assets and regenerable artifacts separately", () => {
+  const comment = renderComment({
+    findings: [],
+    skipped_files: [
+      { path: "assets/logo.png", reason: "verified-binary-asset" },
+      { path: "generated/hashes.json", reason: "regenerable-artifact", verified_by: "pre-merge-checks" },
+      { path: "generated/selectors.txt", reason: "regenerable-artifact", verified_by: "pre-merge-checks" }
+    ]
+  });
+  assert.match(comment, /Verified binary assets excluded from model review: 1\./u);
+  assert.match(comment, /Regenerable artifacts excluded from model review: 2\./u);
+  const regenerableOnly = renderComment({
+    findings: [],
+    skipped_files: [{ path: "generated/hashes.json", reason: "regenerable-artifact", verified_by: "pre-merge-checks" }]
+  });
+  assert.doesNotMatch(regenerableOnly, /binary assets/u);
+});
+
 test("comment rendering neutralizes mentions and markup", () => {
   const [candidate] = validateCandidateOutput(
     candidateOutput({ title: "Notify @security <script>", description: "unsafe\nheading" }),

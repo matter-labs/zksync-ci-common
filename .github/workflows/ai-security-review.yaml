@@ -465,6 +465,7 @@ jobs:
           FINDING_COUNT: ${{ steps.verify.outputs.finding_count }}
           LOCKFILE_SOURCE_COUNT: ${{ steps.verify.outputs.lockfile_source_count }}
           SKIPPED_FILE_COUNT: ${{ steps.verify.outputs.skipped_file_count }}
+          REGENERABLE_ARTIFACT_COUNT: ${{ steps.verify.outputs.regenerable_artifact_count }}
         run: |
           {
             echo "## AI security review"
@@ -473,6 +474,7 @@ jobs:
             echo "Published findings: ${FINDING_COUNT}"
             echo "New lockfile sources validated: ${LOCKFILE_SOURCE_COUNT}"
             echo "Verified binary assets skipped: ${SKIPPED_FILE_COUNT}"
+            echo "Regenerable artifacts skipped: ${REGENERABLE_ARTIFACT_COUNT}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload complete review result

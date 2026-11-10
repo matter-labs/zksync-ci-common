@@ -102,6 +102,12 @@ binary blob without a known binary extension fails preparation. Text remains rev
 denotes a binary asset. Pure renames and mode changes become synthetic metadata units. Base snapshots come from the pull
 request merge base.
 
+Files matching the base configuration's `regenerableArtifacts` are excluded before any patch is built and recorded as
+`regenerable-artifact` skips with their verifying check. A rename or copy qualifies only when both paths match.
+Lockfiles, submodule pointers, `.github/` files and trusted context files are never excluded, so source policy, gitlink
+coverage and the review's own inputs are unaffected. The engine trusts the configuration's claim that CI verifies these
+outputs; see [regenerable artifacts](configuration.md#skip-regenerable-artifacts).
+
 Submodule diffs use `--ignore-submodules=none`, regardless of the PR's `.gitmodules` settings. Preparation independently
 compares mode-160000 entries from the merge-base and head trees, including additions, deletions, renames, and mode
 changes. A missing review unit fails preparation. `submodule_changes` preserves before/after pointers in the result
@@ -277,8 +283,9 @@ error text; numeric metrics and allowlisted categories remain available. See
 - **Dependency semantics:** checks cover documented encodings, not full package-manager behavior. Go replacements,
   registry configuration, and local binary archive contents have gaps; tarball identity checks do not inspect downloaded
   contents.
-- **Submodules and binaries:** gitlink changes are recorded, but submodule code is not fetched. Known binary assets can
-  skip textual review.
+- **Submodules, binaries and regenerable artifacts:** gitlink changes are recorded, but submodule code is not fetched.
+  Known binary assets and configured regenerable artifacts skip textual review; for the latter, review relies on the CI
+  check named in the configuration.
 - **Redaction:** custom credential formats, unlabelled mnemonics, encodings, and structured secrets can escape
   detection. Prompt instructions cannot guarantee secrecy, and human review cannot undo an already-published disclosure.
 - **Caller trust:** repository-owned workflows can be edited and executed before merge approval. CODEOWNERS does not

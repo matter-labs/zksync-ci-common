@@ -71,6 +71,31 @@
           }
         }
       }
+    },
+    "regenerableArtifacts": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "Generated outputs that CI deterministically regenerates and verifies. Matching files are excluded from model review and reported as skipped. Runtime keeps lockfiles, submodule pointers, .github/ files and trusted context files in review.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["paths", "verifiedBy"],
+        "properties": {
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+          },
+          "verifiedBy": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "The CI check that regenerates these outputs and fails on a mismatch."
+          }
+        }
+      }
     }
   }
 }
