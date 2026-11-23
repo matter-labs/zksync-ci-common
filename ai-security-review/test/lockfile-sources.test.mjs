@@ -108,7 +108,10 @@ test("npm workspace links are local paths, not sources", () => {
   });
   assert.deepEqual(check(workspace).sources, []);
   assert.deepEqual(check(workspace).violations, []);
-  assert.equal(check(npmLock("git+https://github.com/unknown/repo.git", "pkg", { link: true })).violations[0]?.reason, "unapproved-source");
+  assert.equal(
+    check(npmLock("git+https://github.com/unknown/repo.git", "pkg", { link: true })).violations[0]?.reason,
+    "unapproved-source"
+  );
   assert.equal(check(npmLock("packages/query")).violations[0]?.reason, "unapproved-source");
 });
 
