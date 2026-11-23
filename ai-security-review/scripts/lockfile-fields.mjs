@@ -17,7 +17,8 @@ function isLocalLink(parent) {
 
 function npmSourceField(location, parent) {
   const field = location.at(-1);
-  if (field === "resolved" && isLocalLink(parent)) return null;
+  // Only the `packages` section of an npm 7+ lockfile gives `link` a meaning; npm 6 and earlier ignore it.
+  if (location.length === 3 && location[0] === "packages" && field === "resolved" && isLocalLink(parent)) return null;
   if (npmPackagePath(location.slice(0, -1)) && ["resolved", "version", "from"].includes(field)) return "url";
   if (npmPackagePath(location.slice(0, -2)) && (DEPENDENCY_MAPS.has(location.at(-2)) || location.at(-2) === "requires"))
     return "url";

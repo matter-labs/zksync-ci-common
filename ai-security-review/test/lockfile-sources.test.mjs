@@ -115,6 +115,15 @@ test("npm workspace links are local paths, not sources", () => {
   assert.equal(check(npmLock("packages/query")).violations[0]?.reason, "unapproved-source");
 });
 
+test("an old-format lockfile cannot exempt a source by marking it a link", () => {
+  const legacy = JSON.stringify({
+    lockfileVersion: 1,
+    requires: true,
+    dependencies: { pkg: { version: "1.0.0", resolved: "evil/repo", link: true } }
+  });
+  assert.equal(check(legacy).violations[0]?.reason, "unapproved-source");
+});
+
 test("YAML, TOML, JSONC and Yarn decode escaped sources before policy checks", () => {
   const escaped = String.raw`https:\u002f\u002funknown.example.invalid/pkg.tgz`;
   for (const [filePath, contents] of [
