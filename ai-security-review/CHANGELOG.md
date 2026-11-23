@@ -5,6 +5,13 @@ changing authentication trust or callers.
 
 ## Unreleased
 
+Regenerable artifacts:
+
+- Add the `regenerableArtifacts` repository setting. Generated outputs that a named CI check regenerates and verifies
+  are excluded from model review and reported as `regenerable-artifact` skips with that check. Lockfiles, submodule
+  pointers, `.github/` files and trusted context files always stay in review. The comment and job summary count them
+  separately from binary assets; the verify action adds a `regenerable_artifact_count` output.
+
 Pre-release review fixes:
 
 - Reject duplicate JSON/JSONC lockfile keys; apply npm and Bundler readers to `npm-shrinkwrap.json` and `gems.locked`.

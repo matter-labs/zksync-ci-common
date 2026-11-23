@@ -57,6 +57,9 @@ export function renderComment(result) {
   for (const field of ["skipped_files", "lockfile_source_changes"]) {
     assert(result[field] === undefined || Array.isArray(result[field]), "comment metadata must contain arrays");
   }
+  const skippedCount = (reason) => (result.skipped_files ?? []).filter((file) => file?.reason === reason).length;
+  const binaryAssets = skippedCount("verified-binary-asset");
+  const regenerableArtifacts = skippedCount("regenerable-artifact");
   const warnings = result.review_warnings ?? [];
   const submodules = result.submodule_changes ?? [];
   assert(Array.isArray(warnings) && Array.isArray(submodules), "invalid review warnings");
@@ -100,8 +103,13 @@ export function renderComment(result) {
         ]
       : []),
     ...(runLink ? [runLink] : []),
-    ...(result.skipped_files?.length
-      ? [`Verified binary assets excluded from model review: ${result.skipped_files.length}. See the result artifact.`]
+    ...(binaryAssets
+      ? [`Verified binary assets excluded from model review: ${binaryAssets}. See the result artifact.`]
+      : []),
+    ...(regenerableArtifacts
+      ? [
+          `Regenerable artifacts excluded from model review: ${regenerableArtifacts}. Each names the CI check that verifies it; see skipped_files in the result artifact.`
+        ]
       : []),
     ...(result.lockfile_source_changes?.length
       ? [

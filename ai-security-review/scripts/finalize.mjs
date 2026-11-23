@@ -59,7 +59,9 @@ withValidationDiagnostics("verifier", () => {
   appendFileSync(githubOutput, `result_file=${resultFile}\n`);
   appendFileSync(githubOutput, `comment_file=${commentFile}\n`);
   appendFileSync(githubOutput, `finding_count=${result.findings.length}\n`);
-  appendFileSync(githubOutput, `skipped_file_count=${result.skipped_files.length}\n`);
+  const skippedCount = (reason) => result.skipped_files.filter((file) => file.reason === reason).length;
+  appendFileSync(githubOutput, `skipped_file_count=${skippedCount("verified-binary-asset")}\n`);
+  appendFileSync(githubOutput, `regenerable_artifact_count=${skippedCount("regenerable-artifact")}\n`);
   appendFileSync(githubOutput, `lockfile_source_count=${result.lockfile_source_changes.length}\n`);
   console.log(
     `Completed security review with ${result.findings.length} published findings and ${result.filtered_candidates.length} filtered candidates.`

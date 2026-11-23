@@ -62,6 +62,9 @@ outputs:
   skipped_file_count:
     description: Number of verified binary assets excluded from model review
     value: ${{ steps.finalize.outputs.skipped_file_count }}
+  regenerable_artifact_count:
+    description: Number of configured regenerable artifacts excluded from model review
+    value: ${{ steps.finalize.outputs.regenerable_artifact_count }}
   lockfile_source_count:
     description: Number of new lockfile sources validated
     value: ${{ steps.finalize.outputs.lockfile_source_count }}

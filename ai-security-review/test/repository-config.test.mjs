@@ -77,6 +77,29 @@ test("repository configuration enforces the schema's array and string constraint
   }
 });
 
+test("regenerable artifacts require named paths and a verifying check", () => {
+  const entry = { paths: ["generated/**/*.json", "AllContractsHashes.json"], verifiedBy: "pre-merge-checks" };
+  assert.deepEqual(
+    validateRepositoryConfig({ version: 1, regenerableArtifacts: [entry] }, profilesRoot).regenerableArtifacts,
+    [entry]
+  );
+  assert.deepEqual(validateRepositoryConfig({ version: 1 }, profilesRoot).regenerableArtifacts, []);
+  for (const [regenerableArtifacts, message] of [
+    [null, /array/u],
+    [[{ paths: ["generated/**"] }], /verifiedBy/u],
+    [[{ paths: ["generated/**"], verifiedBy: "  " }], /verifiedBy/u],
+    [[{ paths: ["generated/**"], verifiedBy: "pre-merge\nchecks" }], /verifiedBy/u],
+    [[{ paths: ["generated/**"], verifiedBy: "x".repeat(201) }], /verifiedBy/u],
+    [[{ paths: [], verifiedBy: "pre-merge-checks" }], /at least 1/u],
+    [[{ paths: ["**"], verifiedBy: "pre-merge-checks" }], /only wildcards/u],
+    [[{ paths: ["**/*"], verifiedBy: "pre-merge-checks" }], /only wildcards/u],
+    [[{ paths: ["a", "a"], verifiedBy: "pre-merge-checks" }], /unique/u],
+    [[{ paths: ["generated/**"], verifiedBy: "pre-merge-checks", disabled: true }], /unknown key/u]
+  ]) {
+    assert.throws(() => validateRepositoryConfig({ version: 1, regenerableArtifacts }, profilesRoot), message);
+  }
+});
+
 test("schema patterns and runtime agree on canonical source and hostname examples", () => {
   const schema = JSON.parse(readFileSync(new URL("../schemas/repository-config.schema.json", import.meta.url), "utf8"));
   for (const [field, value, expected] of [

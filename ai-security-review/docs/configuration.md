@@ -44,19 +44,21 @@ Artifact retention is configured centrally; the table above gives the current pe
 Create `.github/ai-security-review.json` using the [schema](../schemas/repository-config.schema.json) and
 [examples](../examples/README.md#repository-configurations).
 
-| Field                    | Purpose                                                                      |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| `version`                | Required; `1`.                                                               |
-| `profiles`               | Additional built-in profiles for every path.                                 |
-| `pathProfiles`           | Additional built-in profiles selected by path globs.                         |
-| `context`                | Trusted repository files included in every reviewer batch.                   |
-| `groupRoots`             | Directories for grouping related changes into batches.                       |
-| `allowedLockfileHosts`   | Additional approved registry hosts.                                          |
-| `allowedLockfileSources` | Exact approved HTTPS repository origins, without a trailing slash or `.git`. |
+| Field                    | Purpose                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| `version`                | Required; `1`.                                                                  |
+| `profiles`               | Additional built-in profiles for every path.                                    |
+| `pathProfiles`           | Additional built-in profiles selected by path globs.                            |
+| `context`                | Trusted repository files included in every reviewer batch.                      |
+| `groupRoots`             | Directories for grouping related changes into batches.                          |
+| `allowedLockfileHosts`   | Additional approved registry hosts.                                             |
+| `allowedLockfileSources` | Exact approved HTTPS repository origins, without a trailing slash or `.git`.    |
+| `regenerableArtifacts`   | Generated outputs that CI regenerates and verifies; excluded from model review. |
 
-Configuration and context come from the PR base commit, not its head. These settings cannot remove mandatory profiles or
-completeness checks. An empty `context` list uses `.github/security-review-focus.md` when present; a non-empty list
-selects only its named files.
+Configuration and context come from the PR base commit, not its head. These settings cannot remove mandatory profiles.
+Completeness checks cover every changed file except configured [regenerable artifacts](#skip-regenerable-artifacts). An
+empty `context` list uses `.github/security-review-focus.md` when present; a non-empty list selects only its named
+files.
 
 ### Use Multiple Focus Files
 
@@ -87,6 +89,32 @@ You can list up to ten context files, limited to 128 KiB per file and 256 KiB co
 are repeated in every reviewer batch. Missing configured files fail preparation; a non-empty list replaces the automatic
 fallback, so include every file you need.
 
+### Skip Regenerable Artifacts
+
+List generated outputs that a CI check rebuilds from source and compares with the committed copy, such as hash
+manifests, ABI exports or genesis files. Matching files are excluded from model review and recorded in `skipped_files`
+with reason `regenerable-artifact` and the entry's `verifiedBy` check:
+
+```json
+{
+  "version": 1,
+  "regenerableArtifacts": [
+    {
+      "paths": ["AllContractsHashes.json", "contracts/abi-exports/**/*.json"],
+      "verifiedBy": "pre-merge-checks"
+    }
+  ]
+}
+```
+
+Only list outputs that a required check regenerates and fails on when they differ; the engine cannot verify that claim.
+Keep patterns narrow and extension-specific, because a matching new file is skipped too. A rename or copy is skipped
+only when its previous path also matches, so reviewed code cannot move into a skipped path without review.
+
+Lockfiles, submodule pointers, files under `.github/` and configured context files always stay in review, even when a
+pattern matches. The changed-file manifest still lists skipped paths, so reviewers see that they changed without
+receiving their contents. The PR comment and job summary report the count separately from binary assets.
+
 ## Select Profiles
 
 In `pathProfiles.paths`, `*` matches within one path segment, `?` matches one non-slash character, and `**` can cross
@@ -107,9 +135,9 @@ services, policy engines, privacy and data exposure, privileged automation, smar
 zero-knowledge circuits.
 
 The repository configuration is always read from the pull request base commit. It can add trusted context and profiles,
-but it cannot disable the universal profile, change credentials or model selection, suppress completeness validation, or
-load arbitrary central files. See the [repository examples](../examples/README.md#repository-configurations) for
-configuration patterns.
+but it cannot disable the universal profile, change credentials or model selection, suppress completeness validation for
+files it does not declare as regenerable artifacts, or load arbitrary central files. See the
+[repository examples](../examples/README.md#repository-configurations) for configuration patterns.
 
 ### Content-Aware Routing
 

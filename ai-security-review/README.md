@@ -146,7 +146,8 @@ required-check setting are separate controls; configuring only one does not full
 - Verification challenges candidates; it does not independently re-review units declared clean.
 - Read coverage proves delivery of source text, not understanding or complete vulnerability detection.
 - Prompt-injection notices and output redaction reduce specific risks without providing complete protection.
-- Dependency checks cover documented sources and formats; submodule code and known binary assets are not reviewed.
+- Dependency checks cover documented sources and formats; submodule code, known binary assets and configured regenerable
+  artifacts are not reviewed.
 - Repository-owned callers can change in PRs. Code-owner approval controls merging, not execution before approval.
 
 Read the [security model and limitations](docs/security-model.md#limitations) for the precise boundaries, including
