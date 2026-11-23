@@ -97,6 +97,21 @@ test("npm aliases, scoped and nested packages, local dependencies and legacy loc
   );
 });
 
+test("npm workspace links are local paths, not sources", () => {
+  const workspace = JSON.stringify({
+    lockfileVersion: 3,
+    packages: {
+      "node_modules/@repo/query": { resolved: "packages/query", link: true },
+      "node_modules/sibling": { resolved: "../sibling", link: true },
+      "packages/query": { version: "0.0.0" }
+    }
+  });
+  assert.deepEqual(check(workspace).sources, []);
+  assert.deepEqual(check(workspace).violations, []);
+  assert.equal(check(npmLock("git+https://github.com/unknown/repo.git", "pkg", { link: true })).violations[0]?.reason, "unapproved-source");
+  assert.equal(check(npmLock("packages/query")).violations[0]?.reason, "unapproved-source");
+});
+
 test("YAML, TOML, JSONC and Yarn decode escaped sources before policy checks", () => {
   const escaped = String.raw`https:\u002f\u002funknown.example.invalid/pkg.tgz`;
   for (const [filePath, contents] of [

@@ -9,8 +9,15 @@ function npmPackagePath(location) {
   );
 }
 
-function npmSourceField(location) {
+// npm writes a workspace or `npm link` entry as `{ resolved: "<relative path>", link: true }`. The path is a local
+// symlink target, not a source, and read as a source it parses as GitHub `owner/repo` shorthand.
+function isLocalLink(parent) {
+  return parent?.link === true && typeof parent.resolved === "string" && !parent.resolved.includes(":");
+}
+
+function npmSourceField(location, parent) {
   const field = location.at(-1);
+  if (field === "resolved" && isLocalLink(parent)) return null;
   if (npmPackagePath(location.slice(0, -1)) && ["resolved", "version", "from"].includes(field)) return "url";
   if (npmPackagePath(location.slice(0, -2)) && (DEPENDENCY_MAPS.has(location.at(-2)) || location.at(-2) === "requires"))
     return "url";
@@ -67,7 +74,7 @@ function pythonSourceField(filename, location, parent) {
 export function lockfileSourceField(filename, location, parent, document) {
   switch (filename) {
     case "package-lock.json":
-      return npmSourceField(location);
+      return npmSourceField(location, parent);
     case "pnpm-lock.yaml":
       return pnpmSourceField(location, parent);
     case "yarn.lock":
