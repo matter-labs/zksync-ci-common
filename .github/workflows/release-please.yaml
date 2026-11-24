@@ -168,7 +168,7 @@ jobs:
 
       - name: Run release-please
         id: release
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           # Always use an App token to trigger workflows after tag publishing
           # DO NOT use default github_token here (!)
